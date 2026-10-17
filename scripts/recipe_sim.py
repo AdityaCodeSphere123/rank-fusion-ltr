@@ -47,6 +47,10 @@ VARIANTS = {
     "mdl_x4": "mdl_x4",
     "lr_0.1": {"learning_rate": 0.1},
     "lr_0.025": {"learning_rate": 0.025},
+    "trunc10": {"lambdarank_truncation_level": 10},
+    "qz": {},
+    "qr": {},
+    "qz_trunc10": {"lambdarank_truncation_level": 10},
 }
 
 
@@ -76,6 +80,30 @@ def make_task(name, seed):
     return part(order[:a]), part(order[a:b]), part(order[b:b + n_te])
 
 
+def query_relative(X, sizes, kind):
+    """Append a within-query transform of every column. Trees are not invariant to this: the new columns
+    are invariant to a per-feature shift and scale, which raw values are not. kind 'z' is a z-score,
+    kind 'r' is the average rank in [0, 1]."""
+    extra = np.empty_like(X)
+    i = 0
+    for n in sizes:
+        block = X[i:i + n]
+        if kind == "z":
+            mu = block.mean(axis=0)
+            sd = block.std(axis=0)
+            sd = np.where(sd < 1e-6, 1.0, sd)
+            extra[i:i + n] = (block - mu) / sd
+        else:
+            # average rank, 0 = worst. argsort twice; ties share the mean rank of the tie group.
+            order = np.argsort(block, axis=0, kind="stable")
+            ranks = np.empty_like(order)
+            rows = np.arange(n)[:, None]
+            ranks[order, np.arange(block.shape[1])] = rows
+            extra[i:i + n] = ranks / max(n - 1, 1)
+        i += n
+    return np.hstack([X, extra]).astype(np.float32, copy=False)
+
+
 def run(job):
     task, seed, variant = job
     import lightgbm as lgb
@@ -83,6 +111,9 @@ def run(job):
     from submission import recipe
 
     (X, y, g), (Xv, yv, gv), (Xt, yt, gt) = make_task(task, seed)
+    rel = "z" if variant in ("qz", "qz_trunc10") else ("r" if variant == "qr" else None)
+    if rel is not None:
+        X, Xv, Xt = query_relative(X, g, rel), query_relative(Xv, gv, rel), query_relative(Xt, gt, rel)
     qt = np.repeat(np.arange(len(gt)), gt)
     t0 = time.perf_counter()
     spec = VARIANTS[variant]

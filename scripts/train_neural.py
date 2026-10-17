@@ -61,6 +61,8 @@ def main():
     ap.add_argument("--ndcg-trunc", type=int, default=None)
     ap.add_argument("--weight-decay", type=float, default=0.0)
     ap.add_argument("--lr-decay", type=float, default=1.0)
+    ap.add_argument("--scale", choices=["standard", "robust"], default="standard",
+                    help="affine feature scaler stored in the artifact (robust = median / IQR)")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--no-save", action="store_true", help="experiment only: do not write the .pt artifact")
     ap.add_argument("--log", default=None, help="append a JSON summary line to this file")
@@ -94,7 +96,7 @@ def main():
                                      patience=args.patience, hidden=args.hidden, verbose=True,
                                      pair_weighting=args.pair_weighting, queries_per_batch=args.queries_per_batch,
                                      ndcg_trunc=args.ndcg_trunc, weight_decay=args.weight_decay,
-                                     lr_decay=args.lr_decay)
+                                     lr_decay=args.lr_decay, scale=args.scale)
         secs = time.perf_counter() - t0
         scorer = make_scorer(net, std)
         best = max(hist, key=lambda h: h["dev_ndcg@10"])

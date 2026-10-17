@@ -1,0 +1,12 @@
+{
+  "fusion_dev_ndcg@10": 0.3104698778134059,
+  "fusion_dev_map@10": 0.13024090311703873,
+  "ltr_dev_ndcg@10": 0.48446517532423,
+  "ltr_dev_map@10": 0.15256834106432962,
+  "note": "These are RAW numbers. The real Tracks A, B, C1, C2 percentile-rank each against the whole class (weights A10/B10/P10/C1 35/C2 35). C1 needs the hidden benchmarks and C2 hidden held-out data, so neither can be computed locally: use scripts/run_recipe.py (C1 dry run on synthetic transfer sets) and scripts/cv_lambdamart.py (your local train/validation gap within TRAIN).",
+  "timing": {
+    "prepare_seconds": 0.17090337500121677,
+    "ranking_seconds": 59.76783879099821
+  },
+  "num_queries": 2000
+}

@@ -231,10 +231,24 @@ def dev_ndcg(scorer: Callable[[np.ndarray], np.ndarray], X, y, qids) -> float:
 
 # ---- training ---------------------------------------------------------------
 
+def _standardizer_for(X: np.ndarray, scale: str) -> Standardizer:
+    """Affine scaler stored in the artifact. 'robust' uses the median and IQR, so a few huge count/length
+    features do not set the scale for the whole column. Staff apply exactly this affine map."""
+    if scale == "standard":
+        return Standardizer().fit(X)
+    if scale != "robust":
+        raise ValueError("scale must be 'standard' or 'robust'")
+    med = np.median(X, axis=0)
+    iqr = np.percentile(X, 75, axis=0) - np.percentile(X, 25, axis=0)
+    iqr = np.where(iqr < 1e-8, 1.0, iqr)
+    return Standardizer(med.astype(np.float64), (iqr / 1.349).astype(np.float64))
+
+
 def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch_size: int = 1024,
                 lr: float = 1e-3, pairs_per_query: int = 300, patience: int = 3, hidden=64,
                 verbose: bool = False, pair_weighting: str = "none", queries_per_batch: int = 16,
-                ndcg_trunc: Optional[int] = None, weight_decay: float = 0.0, lr_decay: float = 1.0):
+                ndcg_trunc: Optional[int] = None, weight_decay: float = 0.0, lr_decay: float = 1.0,
+                scale: str = "standard"):
     """Train a 'pointwise' or 'pairwise' scorer. train / dev are (X_raw, y, qids)
     tuples. Returns (network, standardizer, history) with the best-dev-nDCG
     weights restored. The setup below is PROVIDED; the loop is yours (TODO(6)).
@@ -253,7 +267,7 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
     X, y, q = train
     Xd, yd, qd = dev
     set_seed(seed)                                    # TODO(1) makes this meaningful
-    standardizer = Standardizer().fit(X)              # fit on TRAIN only
+    standardizer = _standardizer_for(X, scale)        # fit on TRAIN only; staff apply this same affine map
     Xt = torch.from_numpy(standardizer.transform(X))
     yt = torch.from_numpy(np.asarray(y, dtype=np.float32))
     network = ScoringNetwork(X.shape[1], hidden)

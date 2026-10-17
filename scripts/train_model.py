@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import argparse
 import time
 
+import numpy as np
+
 from harness.feature_io import read_svmlight_ltr, stack
 from scripts.lambdamart_utils import default_params, fit, ndcg10
 
@@ -42,6 +44,9 @@ def main():
     ap.add_argument("--bagging-fraction", type=float, default=0.8)
     ap.add_argument("--bagging-freq", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--feature-noise", type=float, default=0.0,
+                    help="append a second copy of the training rows with Gaussian feature noise of this many "
+                         "feature-stds (0 = off). Labels are unchanged. Chosen on a TRAIN fold for Track C2.")
     ap.add_argument("--use-dev", action="store_true", help="also train on dev (lowers Track C; declare it)")
     args = ap.parse_args()
 
@@ -55,6 +60,14 @@ def main():
     else:
         train_used = train
     X, y, q = stack(train_used)
+    n_clean = len(y)
+    if args.feature_noise > 0:
+        rng = np.random.RandomState(args.seed)
+        std = X.std(axis=0).astype(np.float32)
+        noisy = X + args.feature_noise * std * rng.randn(*X.shape).astype(np.float32)
+        X = np.vstack([X, noisy.astype(np.float32)])
+        y = np.concatenate([y, y])
+        q = np.concatenate([q, q])
     params = default_params(args.num_leaves, args.learning_rate, args.min_data_in_leaf, lambda_l2=args.lambda_l2,
                             seed=args.seed, feature_fraction=args.feature_fraction,
                             bagging_fraction=args.bagging_fraction, bagging_freq=args.bagging_freq)
@@ -64,9 +77,9 @@ def main():
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     model.save_model(args.out)
     print(f"trained on {len(train_used)} queries ({'train+dev' if args.use_dev else 'train only'}) -> {args.out} "
-          f"({args.trees} trees, {fit_s:.0f}s)")
+          f"({args.trees} trees, feature_noise={args.feature_noise}, {fit_s:.0f}s)")
     print(f"params: {params}")
-    print(f"train nDCG@10 = {ndcg10(model, X, y, q):.4f}")
+    print(f"train nDCG@10 = {ndcg10(model, X[:n_clean], y[:n_clean], q[:n_clean]):.4f}")
     if dev is not None and not args.use_dev:
         Xd, yd, qd = stack(dev)
         print(f"dev   nDCG@10 = {ndcg10(model, Xd, yd, qd):.4f}")

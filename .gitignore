@@ -1,3 +1,6 @@
 experiments/
 data/dev/
 data/train/
+__pycache__/
+*.pyc
+*.pyo
