@@ -19,7 +19,16 @@ FIELDS = ["body", "anchor", "title", "url", "whole_document"]
 
 
 def ndcg(model, X, y, q):
-    return mean_ndcg_from_scores(model.predict(X, num_threads=2), y, q, 10)
+    Xp = X
+    if model.num_feature() == X.shape[1] * 2:
+        from submission.ranking import within_query_ranks
+        ranks = np.empty((len(X), X.shape[1]), dtype=np.float64)
+        starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+        ends = np.r_[starts[1:], len(q)]
+        for a, b in zip(starts, ends):
+            ranks[a:b] = within_query_ranks(X[a:b])
+        Xp = np.hstack([X, ranks])
+    return mean_ndcg_from_scores(model.predict(Xp, num_threads=2), y, q, 10)
 
 
 def versions(X):

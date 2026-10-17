@@ -1,48 +1,19 @@
-"""
-submission/recipe.py -- your training recipe (assignment Section 4.1, Track C1).
+"""Track C1 recipe. Staff call train(train_path, vali_path, out_model_path, seed=0).
 
-Staff call train() ONCE per hidden benchmark (two undisclosed flat-feature LTR datasets) on that
-benchmark's train and vali files, in an isolated directory, then evaluate the model it writes on the benchmark's
-held-out split through YOUR prepare() / rerank_with_ltr(). Contract:
-
-  * signature: train(train_path, vali_path, out_model_path, seed=0) -> None
-  * the files are flat-feature SVMLight (label qid:N 1:v ... D:v), D unknown (at most ~300), labels integers
-    0..4 (possibly fewer levels), at most ~500k training rows; feature meanings are NOT given
-  * write a LightGBM text model (or whatever your prepare() loads) to out_model_path
-  * 20 minutes wall-clock PER BENCHMARK on 4 CPU threads; no network; read only the two input files; deterministic given seed
-  * a recipe that raises, times out, or writes a model prepare() cannot load scores 0 on that benchmark
-
-What this recipe does (rules, not MSLR constants; derivation and measurements in Decision.md):
-  1. Parse both files (one C-level float conversion per line, folded into dense float32 blocks; same semantics as
-     harness.feature_io: absent indices = 0, trailing '# ...' comments ignored, rows grouped by qid in order of
-     first appearance). Width D = the largest feature index in EITHER file, so the model accepts every held-out row
-     (rerank_with_ltr also zero-pads / truncates rows to the model's width).
-  2. Hyperparameters from the data shape (rule_params / plan): leaves and min_data_in_leaf grow with the number of
-     training rows, feature_fraction shrinks as D grows, stronger L2 for small data, learning rate 0.05 (0.1 only
-     if the size-based cost model allows fewer than 800 rounds), max rounds from that cost model.
-  3. Fit on train, monitoring nDCG@10 on the vali file for early stopping (the ONE use of vali for model
-     selection) -> best round count B.
-  4. Refit on train + vali with round(B * (n_train + n_vali) / n_train) rounds -- more queries for the final model,
-     tree count scaled to the extra data -- if the size-based cost estimate fits the budget; otherwise keep the
-     early-stopped train-only model from step 3.
-  5. A wall-clock guard stops boosting early if the run ever approaches the cap (a safety net that only fires on a
-     machine far slower than the cost model assumes; all regular decisions depend on data size only, so the
-     output is deterministic given the seed).
-
-Test it locally on the synthetic transfer sets:  python scripts/run_recipe.py
+Writes a LightGBM LambdaMART model. Leaf size, column sampling, L2 and the
+round budget follow the training-set shape, not MSLR constants. Vali is used
+only to early-stop nDCG@10; the model is then refit on train+vali when the
+size-based cost estimate fits the time budget.
 """
 import time
 
 import numpy as np
 
-TIME_BUDGET_S = 15 * 60          # stay well inside the 20-minute cap (parse + fit + refit + save)
+TIME_BUDGET_S = 15 * 60
 NUM_THREADS = 4
 
 
-# ---- parsing ---------------------------------------------------------------------------------------------------
-
 def _dense_block(lines, width_hint: int):
-    """[(idx int array, val array)] -> dense float32 block (len(lines), max index in block)."""
     width = max([width_hint] + [int(idx.max()) for idx, _ in lines if idx.size])
     B = np.zeros((len(lines), width), dtype=np.float32)
     for r, (idx, val) in enumerate(lines):
@@ -52,10 +23,7 @@ def _dense_block(lines, width_hint: int):
 
 
 def _read(path: str, block_rows: int = 8192):
-    """SVMLight LTR file -> (list of dense float32 row blocks, labels int64 [n], qids list[str] [n]).
-    Same semantics as harness.feature_io.read_svmlight_ltr: absent indices are 0, '# ...' comments ignored.
-    Each line is converted with one C-level float parse; lines are folded into dense blocks every
-    `block_rows` rows so memory stays ~ the size of the final float32 matrix."""
+    """SVMLight file to dense float32 blocks. Absent indices are 0; '# ...' is ignored."""
     labels, qids, blocks, pending = [], [], [], []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -83,8 +51,7 @@ def _read(path: str, block_rows: int = 8192):
 
 
 def _to_matrix(blocks, labels, qids, width: int):
-    """Dense float32 X (n, width) with rows grouped by qid (first-appearance order, file order within a
-    query, exactly like harness.feature_io), labels, and the per-query group sizes LightGBM needs."""
+    """Dense X with rows grouped by qid (first appearance, file order within a query)."""
     X = np.zeros((len(qids), width), dtype=np.float32)
     r = 0
     for B in blocks:
@@ -94,7 +61,7 @@ def _to_matrix(blocks, labels, qids, width: int):
     for q in qids:
         first.setdefault(q, len(first))
     qnum = np.fromiter((first[q] for q in qids), dtype=np.int64, count=len(qids))
-    if len(qnum) and np.any(np.diff(qnum) < 0):           # some query is split: regroup (stable)
+    if len(qnum) and np.any(np.diff(qnum) < 0):
         order = np.argsort(qnum, kind="stable")
         X, labels, qnum = X[order], labels[order], qnum[order]
     sizes = np.bincount(qnum, minlength=len(first)).tolist()
@@ -107,29 +74,23 @@ def load_pair(train_path: str, vali_path: str):
     return _to_matrix(*tr, width), _to_matrix(*va, width)
 
 
-# ---- rules -----------------------------------------------------------------------------------------------------
-
-# Cost model: seconds per (row x used feature) per boosting round with 4 threads, measured on the development
-# machine (Decision.md), times a safety factor for a slower grader. Only data SIZE enters the plan, so the
-# plan -- and therefore the model -- is deterministic given the seed.
+# Seconds per (row x used feature) per round, 4 threads, times a slower-grader factor.
+# Only data size enters the plan, so the model is deterministic given the seed.
 SEC_PER_UNIT = 2.0e-9
 SLOWDOWN = 3.0
-FIT_BUDGET_S = 0.55 * TIME_BUDGET_S       # first fit (with early stopping) may use at most this, predicted
-REFIT_TOTAL_BUDGET_S = 0.8 * TIME_BUDGET_S  # predicted fit + refit must fit in this, else keep the first model
+FIT_BUDGET_S = 0.55 * TIME_BUDGET_S
+REFIT_TOTAL_BUDGET_S = 0.8 * TIME_BUDGET_S
 
 
 def _round_cost_s(n_rows: int, n_features: int, params) -> float:
-    leaves_factor = max(0.5, (params["num_leaves"] / 31.0) ** 0.45)   # measured: 127 leaves ~1.84x 31 leaves
+    leaves_factor = max(0.5, (params["num_leaves"] / 31.0) ** 0.45)
     return SEC_PER_UNIT * SLOWDOWN * n_rows * max(1.0, n_features * params["feature_fraction"]) * leaves_factor
 
 
 def rule_params(n_rows: int, n_queries: int, n_features: int, n_labels: int, seed: int, **overrides):
-    """LightGBM LambdaMART parameters as functions of the data shape (see Decision.md, 'recipe rules')."""
-    # capacity grows with the amount of data: leaves ~ sqrt(rows) / 16, clipped to [7, 63]
+    """Leaves grow with sqrt(rows); min_data_in_leaf with rows; fewer columns as D grows."""
     num_leaves = int(np.clip(2 ** round(np.log2(max(n_rows, 1) ** 0.5 / 16.0)) - 1, 7, 63))
-    # a leaf must be supported by enough rows: ~ rows / 4000, clipped to [20, 200]
     min_data_in_leaf = int(np.clip(n_rows / 4000.0, 20, 200))
-    # wide inputs: sample fewer columns per tree (decorrelates trees, cheaper); ~1.0 for very narrow inputs
     feature_fraction = float(np.clip(1.0 - 0.15 * np.log2(max(n_features, 1) / 32.0), 0.5, 1.0))
     params = {
         "objective": "lambdarank", "metric": "ndcg", "eval_at": [10],
@@ -145,8 +106,7 @@ def rule_params(n_rows: int, n_queries: int, n_features: int, n_labels: int, see
 
 def plan(n_rows: int, n_vali_rows: int, n_queries: int, n_features: int, n_labels: int, seed: int,
          refit: bool = True, **overrides):
-    """(params, max_rounds, patience, refit_allowed) for a dataset of this shape. If the time budget would only
-    allow few rounds at learning rate 0.05, the rate is doubled rather than under-training."""
+    """If 0.05 would allow fewer than 800 rounds, double the learning rate instead."""
     params = rule_params(n_rows, n_queries, n_features, n_labels, seed, **overrides)
     cost = _round_cost_s(n_rows, n_features, params)
     max_rounds = int(FIT_BUDGET_S / cost)
@@ -158,7 +118,7 @@ def plan(n_rows: int, n_vali_rows: int, n_queries: int, n_features: int, n_label
 
 
 class _Deadline:
-    """LightGBM callback: stop boosting once wall-clock passes `deadline` (safety net only)."""
+    """Stop boosting once wall-clock passes the deadline. Safety net only."""
     order = 30
 
     def __init__(self, deadline: float):
@@ -173,8 +133,7 @@ class _Deadline:
 
 
 def fit_arrays(X, y, g, Xv, yv, gv, seed: int = 0, deadline: float = None, refit: bool = True, **overrides):
-    """Steps 2-5 on in-memory arrays (g / gv = query group sizes, rows contiguous per query).
-    Returns (booster, num_iteration to save, info dict)."""
+    """Fit on train with vali early stopping, then refit on train+vali if the cost model allows."""
     import lightgbm as lgb
 
     t0 = time.perf_counter()
@@ -187,7 +146,6 @@ def fit_arrays(X, y, g, Xv, yv, gv, seed: int = 0, deadline: float = None, refit
                                               "feature_fraction", "lambda_l2")},
             "max_rounds": max_rounds, "patience": patience}
 
-    # step 3: fit on train, early-stop on vali nDCG@10
     dtrain = lgb.Dataset(X, label=y, group=g, free_raw_data=False)
     have_vali = n_vali > 0 and len(gv) > 0 and yv.max() > 0
     guard = _Deadline(t0 + 0.75 * (deadline - t0))
@@ -201,8 +159,7 @@ def fit_arrays(X, y, g, Xv, yv, gv, seed: int = 0, deadline: float = None, refit
     info.update(best_iteration=best, rounds_run=booster.current_iteration(), guard_fired=guard.fired,
                 fit_seconds=round(time.perf_counter() - t0, 1))
 
-    # step 4: refit on train + vali, round count scaled to the extra data, if the predicted cost fits. The
-    # decision uses the size-based cost model only (deterministic); the wall-clock test is a safety net.
+    # Refit decision uses the size-based cost only. The clock check is a safety net.
     if refit and have_vali and not guard.fired:
         rounds = int(round(best * (n_rows + n_vali) / n_rows))
         predicted_fit = info["rounds_run"] * _round_cost_s(n_rows, D, params)

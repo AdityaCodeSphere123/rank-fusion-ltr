@@ -24,6 +24,7 @@ import numpy as np
 
 from harness.feature_io import read_svmlight_ltr, stack
 from scripts.lambdamart_utils import default_params, fit, ndcg10
+from submission.ranking import within_query_ranks
 
 
 def _resolve(path, name):
@@ -44,9 +45,12 @@ def main():
     ap.add_argument("--bagging-fraction", type=float, default=0.8)
     ap.add_argument("--bagging-freq", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--feature-noise", type=float, default=0.0,
-                    help="append a second copy of the training rows with Gaussian feature noise of this many "
-                         "feature-stds (0 = off). Labels are unchanged. Chosen on a TRAIN fold for Track C2.")
+    ap.add_argument("--feature-noise", default="0",
+                    help="comma-separated Gaussian noise scales, in units of each feature's TRAIN std. "
+                         "Each scale appends one extra copy of the rows (0 = off). Labels are unchanged.")
+    ap.add_argument("--query-ranks", action="store_true",
+                    help="append within-query feature ranks, the same transform rerank_with_ltr applies "
+                         "when the model has twice as many features as the input")
     ap.add_argument("--use-dev", action="store_true", help="also train on dev (lowers Track C; declare it)")
     args = ap.parse_args()
 
@@ -61,13 +65,27 @@ def main():
         train_used = train
     X, y, q = stack(train_used)
     n_clean = len(y)
-    if args.feature_noise > 0:
+    scales = [float(s) for s in str(args.feature_noise).split(",") if float(s) > 0]
+    if scales:
         rng = np.random.RandomState(args.seed)
         std = X.std(axis=0).astype(np.float32)
-        noisy = X + args.feature_noise * std * rng.randn(*X.shape).astype(np.float32)
-        X = np.vstack([X, noisy.astype(np.float32)])
-        y = np.concatenate([y, y])
-        q = np.concatenate([q, q])
+        copies_x, copies_y, copies_q = [X], [y], [q]
+        for scale in scales:
+            noisy = (X + scale * std * rng.randn(*X.shape).astype(np.float32)).astype(np.float32)
+            copies_x.append(noisy)
+            copies_y.append(y)
+            copies_q.append(q)
+        X = np.vstack(copies_x)
+        y = np.concatenate(copies_y)
+        q = np.concatenate(copies_q)
+    if args.query_ranks:
+        # Ranks are computed inside each copy, so a noisy copy does not inherit the clean order.
+        ranks = np.empty_like(X)
+        starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+        ends = np.r_[starts[1:], len(q)]
+        for a, b in zip(starts, ends):
+            ranks[a:b] = within_query_ranks(X[a:b])
+        X = np.hstack([X, ranks]).astype(np.float32)
     params = default_params(args.num_leaves, args.learning_rate, args.min_data_in_leaf, lambda_l2=args.lambda_l2,
                             seed=args.seed, feature_fraction=args.feature_fraction,
                             bagging_fraction=args.bagging_fraction, bagging_freq=args.bagging_freq)
@@ -82,6 +100,13 @@ def main():
     print(f"train nDCG@10 = {ndcg10(model, X[:n_clean], y[:n_clean], q[:n_clean]):.4f}")
     if dev is not None and not args.use_dev:
         Xd, yd, qd = stack(dev)
+        if args.query_ranks:
+            ranks = np.empty_like(Xd)
+            starts = np.flatnonzero(np.r_[True, qd[1:] != qd[:-1]])
+            ends = np.r_[starts[1:], len(qd)]
+            for a, b in zip(starts, ends):
+                ranks[a:b] = within_query_ranks(Xd[a:b])
+            Xd = np.hstack([Xd, ranks]).astype(np.float32)
         print(f"dev   nDCG@10 = {ndcg10(model, Xd, yd, qd):.4f}")
 
 

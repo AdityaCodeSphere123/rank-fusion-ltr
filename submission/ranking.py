@@ -1,24 +1,16 @@
-"""
-submission/ranking.py -- your competition entry (assignment Sections 4.2, 5).
+"""Competition entry.
 
-    prepare(model_path)
-    fuse_candidates(qid, candidate_doc_ids, base_scores, k)   -> Track A
-    rerank_with_ltr(qid, candidate_doc_ids, features, k)      -> Tracks B and C
+fuse_candidates: unweighted CombSUM of BM25 (document and title) and LMIR.DIR.
+LMIR.JM is dropped; on TRAIN every channel-weight grid set it to 0.
 
-fuse_candidates: CombSUM (min-max per channel over the candidate pool, then summed) over three of the four
-channels -- BM25 whole document, BM25 title, LMIR.DIR whole document -- with equal weights. LMIR.JM is left
-out: on TRAIN, every grid of channel weights put it at 0, and dropping it beat plain 4-channel CombSUM, CombMNZ
-and RRF for every c (scripts/fusion_eval.py, Decision.md). Selected on TRAIN only.
+rerank_with_ltr: the LightGBM model loaded by prepare(). Rows are padded or
+truncated to the model's width. A model with twice the candidate width was
+trained on raw features plus within-query ranks (within_query_ranks); every
+other width, including recipe.py models, is scored on the raw vectors.
 
-rerank_with_ltr: the LightGBM LambdaMART model loaded by prepare() (submission/model.txt, trained on TRAIN only
-by scripts/train_model.py; for Track C1 whatever submission/recipe.py wrote). It accepts any feature width:
-rows are zero-padded / truncated to the model's feature count, the SVMLight convention for absent indices.
-
-The harness never trains anything: prepare() only LOADS the artifact, and must raise if it is missing (no silent
-fallback to training or to an untrained model). Both ranking functions return at most k (doc_id, score) pairs,
-best first, using ONLY doc_ids from `candidate_doc_ids`, with no duplicates; ties keep candidate order.
-`base_scores`: {doc_id: {channel: score}} (the 4 named channels).
-`features`:    {doc_id: [full feature vector]}.
+prepare() only loads the artifact and raises if it is missing. Both rankers
+return at most k (doc_id, score) pairs, best first, ids drawn only from the
+candidate list, no duplicates. Ties keep candidate order.
 """
 import os
 from typing import Dict, List, Tuple
@@ -55,16 +47,42 @@ def fuse_candidates(qid: str, candidate_doc_ids: List[str], base_scores: Dict[st
     if not ids:
         return []
     fused = combsum_scores({d: base_scores[d] for d in ids}, channels=FUSION_CHANNELS)
-    ranked = sorted(ids, key=lambda d: -fused[d])  # stable: ties keep candidate order
+    ranked = sorted(ids, key=lambda d: -fused[d])
     return [(d, fused[d]) for d in ranked[:k]]
+
+
+def within_query_ranks(X: np.ndarray) -> np.ndarray:
+    """Stable within-query rank of each feature, scaled to [0, 1]. One document is 0.5.
+
+    A per-feature monotone map leaves this unchanged, so splits on it survive a
+    hidden version that only rescales features.
+    """
+    n, d = X.shape
+    if n <= 1:
+        return np.full((n, d), 0.5, dtype=np.float64)
+    order = np.argsort(X, axis=0, kind="mergesort")
+    ranks = np.empty((n, d), dtype=np.float64)
+    ranks[order, np.arange(d)] = np.arange(n, dtype=np.float64)[:, None]
+    return ranks / (n - 1)
 
 
 def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int) -> np.ndarray:
     rows = [np.asarray(features[d], dtype=np.float64).ravel() for d in ids]
-    X = np.zeros((len(rows), width), dtype=np.float64)
+    observed = max((r.shape[0] for r in rows), default=0)
+    X = np.zeros((len(rows), observed), dtype=np.float64)
     for i, r in enumerate(rows):
-        n = min(width, r.shape[0])
+        n = min(observed, r.shape[0])
         X[i, :n] = r[:n]
+    # 2x width: raw features concatenated with within-query ranks (the MSLR model).
+    if observed > 0 and width == 2 * observed:
+        X = np.hstack([X, within_query_ranks(X)])
+    elif width != observed:
+        if width > observed:
+            padded = np.zeros((len(rows), width), dtype=np.float64)
+            padded[:, :observed] = X
+            X = padded
+        else:
+            X = X[:, :width]
     return X
 
 
