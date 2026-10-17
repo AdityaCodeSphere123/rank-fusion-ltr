@@ -51,6 +51,9 @@ def main():
     ap.add_argument("--query-ranks", action="store_true",
                     help="append within-query feature ranks, the same transform rerank_with_ltr applies "
                          "when the model has twice as many features as the input")
+    ap.add_argument("--single-field-copies", action="store_true",
+                    help="append five copies of the rows, each keeping one MSLR field "
+                         "(body, anchor, title, url, whole document) plus features 126-136")
     ap.add_argument("--use-dev", action="store_true", help="also train on dev (lowers Track C; declare it)")
     args = ap.parse_args()
 
@@ -78,6 +81,18 @@ def main():
         X = np.vstack(copies_x)
         y = np.concatenate(copies_y)
         q = np.concatenate(copies_q)
+    if args.single_field_copies:
+        copies_x, copies_y, copies_q = [X], [y], [q]
+        for field in range(5):
+            kept = np.zeros_like(X)
+            kept[:, field:125:5] = X[:, field:125:5]
+            kept[:, 125:] = X[:, 125:]
+            copies_x.append(kept)
+            copies_y.append(y)
+            copies_q.append(q)
+        X = np.vstack(copies_x)
+        y = np.concatenate(copies_y)
+        q = np.concatenate(copies_q)
     if args.query_ranks:
         # Ranks are computed inside each copy, so a noisy copy does not inherit the clean order.
         ranks = np.empty_like(X)
@@ -95,7 +110,8 @@ def main():
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     model.save_model(args.out)
     print(f"trained on {len(train_used)} queries ({'train+dev' if args.use_dev else 'train only'}) -> {args.out} "
-          f"({args.trees} trees, feature_noise={args.feature_noise}, {fit_s:.0f}s)")
+          f"({args.trees} trees, feature_noise={args.feature_noise}, "
+          f"single_field_copies={args.single_field_copies}, {fit_s:.0f}s)")
     print(f"params: {params}")
     print(f"train nDCG@10 = {ndcg10(model, X[:n_clean], y[:n_clean], q[:n_clean]):.4f}")
     if dev is not None and not args.use_dev:
