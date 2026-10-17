@@ -356,3 +356,9 @@ same seed give identical weights (test, and both training paths checked by hand)
   the grader); torch CPU training was bit-reproducible here, but other BLAS builds may differ in the last bits
   (only matters for retraining, not for the shipped artifacts).
 * Nothing was trained, tuned or early-stopped on DEV; no external data was used; `test.txt` was never present.
+
+### D6. Feature-noise augmentation (Track C2)
+
+Graded Track C2 was 0.3533 against a clean Track B of 0.4845. On DEV, additive Gaussian noise of 0.05× each feature's standard deviation drops the unaugmented model from 0.4845 to 0.3450; multiplicative noise and dropping one MSLR field do not. That noise scale was not used to choose the model. The choice was the TRAIN fold-0 probe (`scripts/probe_noise.py`, 800 trees, folds 1–4 trained, fold 0 scored): training on a clean copy plus one noisy copy at 0.1× feature std gave clean 0.4804 and 0.1-std-noise 0.4450, against 0.4879 / 0.3322 for the unaugmented hyperparameters at 1000 trees. Coarser `max_bin` did not help. No other learning-to-rank dataset was downloaded.
+
+Shipped refit: the D5 command plus `--feature-noise 0.1` (298 s). Clean train nDCG@10 0.5570, clean DEV 0.4841. DEV with 0.05-std noise, scored after the choice: 0.4578.

@@ -5,7 +5,7 @@ Full decision log with every measured number: `Decision.md` (repo root). Experim
 ## Training-data declaration
 | model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
 |---|---|---|---|
-| LambdaMART `model.txt` | TRAIN only (all 6,000 Fold1 train queries) | grouped 5-fold CV on TRAIN (`scripts/cv_sweep.py`) | none — fixed 2000 trees chosen by the TRAIN CV tree sweep |
+| LambdaMART `model.txt` | TRAIN only (all 6,000 Fold1 train queries), each row twice: once clean and once with Gaussian feature noise of 0.1× that feature's TRAIN std | grouped 5-fold CV on TRAIN for the tree hyperparameters (`scripts/cv_sweep.py`); noise scale chosen on TRAIN fold 0 only | none — fixed 2000 trees |
 | pointwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | not tuned (textbook settings) | a held-out 1/10 of TRAIN queries (`grouped_kfold(k=10, seed=0)` fold 0) |
 | pairwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | TRAIN folds (fold 0 = monitor, fold 1 = comparison holdout) | the held-out 1/10 of TRAIN queries (fold 0) |
 | recipe.py (run by staff on hidden benchmarks) | each hidden benchmark's train+vali | MSLR TRAIN CV / synthetic transfer sets (benchmark-like tasks carved from TRAIN only) | the benchmark's vali file (single nDCG@10 early-stopping monitor), then refit on train+vali |
@@ -27,10 +27,14 @@ survives selection. DEV (reported only): nDCG@10 0.3105, MAP@10 0.1302 (RRF c=60
 ## LambdaMART hyperparameters and how chosen (cite your CV table)
 `objective=lambdarank, num_leaves=63, learning_rate=0.0125, min_data_in_leaf=500, feature_fraction=0.5,
 lambda_l2=1.0, bagging_fraction=0.8, bagging_freq=1`, 2000 trees, `num_threads=4, deterministic=True,
-force_row_wise=True, seed=0`. No feature engineering: the 136 given features are used as they are. Reproduce with
+force_row_wise=True, seed=0`. No feature engineering: the 136 given features are used as they are. Training rows are
+duplicated with Gaussian noise of 0.1× each feature's TRAIN standard deviation (labels unchanged), so splits depend
+less on exact feature values. Chosen because, on TRAIN fold 0, this left clean nDCG@10 at 0.480 against 0.488 for the
+same hyperparameters without noise, and raised nDCG@10 under 0.1-std feature noise from 0.332 to 0.445. Reproduce with
 `python scripts/train_model.py --train data/train --dev data/dev --out submission/model.txt --trees 2000 --num-leaves 63
 --learning-rate 0.0125 --min-data-in-leaf 500 --lambda-l2 1.0 --feature-fraction 0.5 --bagging-fraction 0.8
---bagging-freq 1 --seed 0`.
+--bagging-freq 1 --seed 0 --feature-noise 0.1`. Full-TRAIN fit: train nDCG@10 0.5570, DEV nDCG@10 0.4841 (reported).
+The same DEV file with 0.05-std feature noise scores 0.4578, against 0.3450 for the model trained without noise.
 
 Chosen by grouped (by query) 5-fold CV on TRAIN, sweeping fixed tree counts (no early stopping on the reported fold),
 16 configurations in three stages (`Decision.md` D5, `experiments/cv_report.txt`):

@@ -378,8 +378,9 @@ Every push runs the public harness on the toy set and reports pass/fail within m
   These are staff-held: you never receive them, and you are not told what they are. Only the LTR path is scored on them (no base-ranker channels are defined for them). See Section~\ref{sec:implement} for what you are told, and \texttt{docs/TRANSFER\_TRACK.md} for the local dry run.
 \end{description}
 
-\begin{mybox}{On Held-Out Secrecy --- Read This}
-MSLR-WEB10K is a complete, publicly downloadable, fully labeled dataset. Unlike Assignment~2's genuinely undisclosed held-out topics, nothing prevents you from downloading the official archive yourself and looking up the true relevance labels for every row, including whichever rows make up the held-out set used for Track~C2. The same holds for the held-out splits of the undisclosed benchmarks used for Track~C1, and you must not try to identify those benchmarks. \textbf{Consulting official MSLR-WEB10K labels, or the labels of any public learning-to-rank dataset you suspect to be an undisclosed benchmark, for any row, by any means, for the purpose of this assignment, is an academic-integrity violation}, identical in kind to consulting a solution key. The held-out set's secrecy here is a matter of course policy, not technical enforcement; treat it accordingly (Section~\ref{sec:integrity}).
+\begin{mybox}{Held-out labels.}
+  You may download MSLR-WEB10K from the official source and use the labels of its test partition (the held-out set) to evaluate and improve your submission locally. You may not use those labels on the training side: no training, fine-tuning, or distillation on them, no adding those queries to any training data, and no fitting of preprocessing statistics on them. This applies to every submitted model and to \texttt{recipe.py}. Training on the held-out labels is treated identically to consulting a solution key.
+  For the undisclosed Track~C1 benchmarks, you must not attempt to identify them, and you must not consult the labels of any public learning-to-rank dataset that you suspect to be one of them, for any purpose. Course staff may rotate which fold and which split serve as the held-out set between offerings.
 \end{mybox}
 
 \section{Competition Mechanics and Scoring}
