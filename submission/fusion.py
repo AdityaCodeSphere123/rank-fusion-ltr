@@ -28,15 +28,36 @@ def rrf_scores(base_scores: Dict[str, Dict[str, float]], channels: Optional[Iter
                c: float = 60.0) -> Dict[str, float]:
     """Reciprocal rank fusion (Cormack, Clarke & Buettcher, SIGIR 2009):
     score(d) = sum over channels of 1 / (c + rank_channel(d)), ranks 1-based,
-    best score = rank 1. Needs only each channel's ORDER, never its scale."""
-    # TODO(fusion-0): implement RRF. For each channel, sort the documents by that channel's score, best first
-    # (use a STABLE sort so ties keep candidate order), give the best document rank 1, and add 1 / (c + rank)
-    # to each document's fused score. Worked example (c = 60):
-    #   base = {"a": {"x": 3.0, "y": 1.0}, "b": {"x": 2.0, "y": 3.0}, "c": {"x": 1.0, "y": 2.0}}
-    #   a: 1/61 + 1/63   b: 1/62 + 1/61   c: 1/63 + 1/62
-    # You may also weight channels or tune c on TRAIN (Section 4.1). Until you do, submission/ranking.py
-    # falls back to sorting by the BM25 channel so the pipeline still runs.
-    raise NotImplementedError("TODO(fusion-0): implement rrf_scores")
+    best score = rank 1. Needs only each channel's ORDER, never its scale.
+    Equal scores within a channel are ranked in candidate (dict insertion) order.
+    Worked example (c = 60):
+      base = {"a": {"x": 3.0, "y": 1.0}, "b": {"x": 2.0, "y": 3.0}, "c": {"x": 1.0, "y": 2.0}}
+      a: 1/61 + 1/63   b: 1/62 + 1/61   c: 1/63 + 1/62"""
+    fused = {d: 0.0 for d in base_scores}
+    for ch in _channels(base_scores, channels):
+        for d, r in _channel_ranks(base_scores, ch).items():
+            fused[d] += 1.0 / (c + r)
+    return fused
+
+
+def _channel_ranks(base_scores: Dict[str, Dict[str, float]], channel: str) -> Dict[str, int]:
+    """1-based rank of every document in one channel, best (highest) score = 1. sorted() is stable, so equal
+    scores keep the dict's insertion (candidate) order."""
+    ordered = sorted(base_scores, key=lambda d: -base_scores[d][channel])
+    return {d: r for r, d in enumerate(ordered, start=1)}
+
+
+def weighted_rrf_scores(base_scores: Dict[str, Dict[str, float]], weights: Dict[str, float],
+                        c: float = 60.0) -> Dict[str, float]:
+    """RRF with a non-negative weight per channel: score(d) = sum_ch w_ch / (c + rank_ch(d)). Channels with
+    weight 0 are skipped. With every weight 1 this is exactly rrf_scores()."""
+    fused = {d: 0.0 for d in base_scores}
+    for ch, w in weights.items():
+        if w == 0:
+            continue
+        for d, r in _channel_ranks(base_scores, ch).items():
+            fused[d] += w / (c + r)
+    return fused
 
 
 def minmax_normalize(values: Dict[str, float]) -> Dict[str, float]:
@@ -51,13 +72,18 @@ def minmax_normalize(values: Dict[str, float]) -> Dict[str, float]:
 def combsum_scores(base_scores: Dict[str, Dict[str, float]],
                    channels: Optional[Iterable[str]] = None) -> Dict[str, float]:
     """CombSUM (Fox & Shaw, TREC-2 1994): sum of the per-channel MIN-MAX-
-    normalised scores."""
-    # TODO(fusion-1): implement CombSUM (or CombMNZ below; at least one of the
-    # two is required). Normalise each channel with minmax_normalize() first,
-    # then sum across channels. Example (2 channels, 3 docs):
-    #   base = {"a": {"x": 1.0, "y": 10.0}, "b": {"x": 3.0, "y": 20.0}, "c": {"x": 2.0, "y": 30.0}}
-    #   normalised x: a=0, b=1, c=0.5 ; y: a=0, b=0.5, c=1  ->  a=0.0, b=1.5, c=1.5
-    raise NotImplementedError("TODO(fusion-1): implement combsum_scores (or combmnz_scores)")
+    normalised scores. Example (2 channels, 3 docs):
+      base = {"a": {"x": 1.0, "y": 10.0}, "b": {"x": 3.0, "y": 20.0}, "c": {"x": 2.0, "y": 30.0}}
+      normalised x: a=0, b=1, c=0.5 ; y: a=0, b=0.5, c=1  ->  a=0.0, b=1.5, c=1.5"""
+    normalised = _normalised_channels(base_scores, channels)
+    return {d: sum(norm[d] for norm in normalised.values()) for d in base_scores}
+
+
+def _normalised_channels(base_scores: Dict[str, Dict[str, float]],
+                         channels: Optional[Iterable[str]]) -> Dict[str, Dict[str, float]]:
+    """{channel: {doc: min-max normalised score over the candidate pool}}."""
+    return {ch: minmax_normalize({d: s[ch] for d, s in base_scores.items()})
+            for ch in _channels(base_scores, channels)}
 
 
 def combmnz_scores(base_scores: Dict[str, Dict[str, float]],
@@ -65,6 +91,11 @@ def combmnz_scores(base_scores: Dict[str, Dict[str, float]],
     """CombMNZ: CombSUM multiplied by the number of channels in which the
     document has a normalised score > 0. (Every candidate here has a score
     from every channel, so 'appears in the list' is defined as 'normalised
-    score > 0' -- see docs/SUBMISSION_INTERFACE.md.)"""
-    # TODO(fusion-1, alternative): optional if you implemented combsum_scores.
-    raise NotImplementedError("TODO(fusion-1): implement combmnz_scores (or combsum_scores)")
+    score > 0' -- see docs/SUBMISSION_INTERFACE.md.)
+    On the CombSUM example above: a appears in 0 channels -> 0; b, c appear in 2 -> b=3.0, c=3.0."""
+    normalised = _normalised_channels(base_scores, channels)
+    fused = {}
+    for d in base_scores:
+        vals = [norm[d] for norm in normalised.values()]
+        fused[d] = sum(vals) * sum(1 for v in vals if v > 0)
+    return fused

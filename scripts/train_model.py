@@ -6,6 +6,11 @@
 that raises your dev nDCG (Tracks A and B) without helping on queries the model has not seen, so your public
 leaderboard position will overstate where you stand (assignment Section 7). Whatever you do, declare it in your
 submission notes (Section 10).
+
+The submitted submission/model.txt was produced with TRAIN only (no --use-dev); the exact command, with the
+hyperparameters chosen by grouped 5-fold CV on TRAIN (scripts/cv_sweep.py), is in Decision.md section 4.
+LightGBM runs with num_threads=4, deterministic=True, force_row_wise=True and a fixed seed, so the artifact is
+reproducible. DEV is only scored after training, as a reported number.
 """
 import os
 import sys
@@ -13,6 +18,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import argparse
+import time
 
 from harness.feature_io import read_svmlight_ltr, stack
 from scripts.lambdamart_utils import default_params, fit, ndcg10
@@ -31,6 +37,10 @@ def main():
     ap.add_argument("--num-leaves", type=int, default=15)
     ap.add_argument("--learning-rate", type=float, default=0.05)
     ap.add_argument("--min-data-in-leaf", type=int, default=50)
+    ap.add_argument("--lambda-l2", type=float, default=1.0)
+    ap.add_argument("--feature-fraction", type=float, default=0.8)
+    ap.add_argument("--bagging-fraction", type=float, default=0.8)
+    ap.add_argument("--bagging-freq", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--use-dev", action="store_true", help="also train on dev (lowers Track C; declare it)")
     args = ap.parse_args()
@@ -45,11 +55,17 @@ def main():
     else:
         train_used = train
     X, y, q = stack(train_used)
-    params = default_params(args.num_leaves, args.learning_rate, args.min_data_in_leaf, seed=args.seed)
+    params = default_params(args.num_leaves, args.learning_rate, args.min_data_in_leaf, lambda_l2=args.lambda_l2,
+                            seed=args.seed, feature_fraction=args.feature_fraction,
+                            bagging_fraction=args.bagging_fraction, bagging_freq=args.bagging_freq)
+    t0 = time.perf_counter()
     model = fit(X, y, q, params, args.trees)
+    fit_s = time.perf_counter() - t0
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     model.save_model(args.out)
-    print(f"trained on {len(train_used)} queries ({'train+dev' if args.use_dev else 'train only'}) -> {args.out}")
+    print(f"trained on {len(train_used)} queries ({'train+dev' if args.use_dev else 'train only'}) -> {args.out} "
+          f"({args.trees} trees, {fit_s:.0f}s)")
+    print(f"params: {params}")
     print(f"train nDCG@10 = {ndcg10(model, X, y, q):.4f}")
     if dev is not None and not args.use_dev:
         Xd, yd, qd = stack(dev)

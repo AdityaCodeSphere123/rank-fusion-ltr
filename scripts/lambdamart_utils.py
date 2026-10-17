@@ -27,7 +27,7 @@ def default_params(num_leaves=31, learning_rate=0.05, min_data_in_leaf=50, lambd
         "objective": "lambdarank", "metric": "ndcg", "eval_at": [10], "num_leaves": num_leaves,
         "learning_rate": learning_rate, "min_data_in_leaf": min_data_in_leaf, "lambda_l2": lambda_l2,
         "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "seed": seed,
-        "deterministic": True, "force_row_wise": True, "verbose": -1, "num_threads": 1,
+        "deterministic": True, "force_row_wise": True, "verbose": -1, "num_threads": 4,
     }
     p.update(extra)
     return p
