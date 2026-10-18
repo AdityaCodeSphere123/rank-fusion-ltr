@@ -1,6 +1,8 @@
 experiments/
-data/dev/
-data/train/
 __pycache__/
 *.pyc
 *.pyo
+runs/
+.pytest_cache/
+data/train/
+data/dev/

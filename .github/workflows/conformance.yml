@@ -1,0 +1,12 @@
+name: conformance
+on: [push, pull_request]
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.10"}
+      - run: pip install numpy lightgbm pytest torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      # Gate = the ranking interface only. tests/test_student_todos.py is a self-check, not a gate.
+      - run: python -m pytest tests --ignore=tests/test_student_todos.py -q
