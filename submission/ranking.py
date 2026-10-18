@@ -52,18 +52,29 @@ def fuse_candidates(qid: str, candidate_doc_ids: List[str], base_scores: Dict[st
 
 
 def within_query_ranks(X: np.ndarray) -> np.ndarray:
-    """Stable within-query rank of each feature, scaled to [0, 1]. One document is 0.5.
+    """Within-query average-tie percentile of each feature, in [0, 1].
 
-    A per-feature monotone map leaves this unchanged, so splits on it survive a
-    hidden version that only rescales features.
+    One document, and any feature that is constant in the query, is 0. Tied
+    values share a percentile, so document order does not matter. A monotone
+    map of one feature leaves its percentile unchanged.
     """
     n, d = X.shape
+    out = np.zeros((n, d), dtype=np.float64)
     if n <= 1:
-        return np.full((n, d), 0.5, dtype=np.float64)
+        return out
     order = np.argsort(X, axis=0, kind="mergesort")
-    ranks = np.empty((n, d), dtype=np.float64)
-    ranks[order, np.arange(d)] = np.arange(n, dtype=np.float64)[:, None]
-    return ranks / (n - 1)
+    sorted_x = np.take_along_axis(X, order, axis=0)
+    denom = float(n - 1)
+    for j in range(d):
+        col = sorted_x[:, j]
+        if col[0] == col[-1]:
+            continue
+        cuts = np.flatnonzero(col[1:] != col[:-1]) + 1
+        starts = np.r_[0, cuts]
+        ends = np.r_[cuts, n]
+        avg = (starts + ends - 1) / 2.0 / denom
+        out[order[np.repeat(np.arange(len(starts)), ends - starts), j], j] = np.repeat(avg, ends - starts)
+    return out
 
 
 def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int) -> np.ndarray:

@@ -7,10 +7,6 @@ that raises your dev nDCG (Tracks A and B) without helping on queries the model 
 leaderboard position will overstate where you stand (assignment Section 7). Whatever you do, declare it in your
 submission notes (Section 10).
 
-The submitted submission/model.txt was produced with TRAIN only (no --use-dev); the exact command, with the
-hyperparameters chosen by grouped 5-fold CV on TRAIN (scripts/cv_sweep.py), is in Decision.md section 4.
-LightGBM runs with num_threads=4, deterministic=True, force_row_wise=True and a fixed seed, so the artifact is
-reproducible. DEV is only scored after training, as a reported number.
 """
 import os
 import sys
@@ -44,6 +40,9 @@ def main():
     ap.add_argument("--feature-fraction", type=float, default=0.8)
     ap.add_argument("--bagging-fraction", type=float, default=0.8)
     ap.add_argument("--bagging-freq", type=int, default=1)
+    ap.add_argument("--max-bin", type=int, default=255)
+    ap.add_argument("--extra-trees", action="store_true",
+                    help="draw each split threshold at random between the bin edges")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--feature-noise", default="0",
                     help="comma-separated Gaussian noise scales, in units of each feature's TRAIN std. "
@@ -103,7 +102,8 @@ def main():
         X = np.hstack([X, ranks]).astype(np.float32)
     params = default_params(args.num_leaves, args.learning_rate, args.min_data_in_leaf, lambda_l2=args.lambda_l2,
                             seed=args.seed, feature_fraction=args.feature_fraction,
-                            bagging_fraction=args.bagging_fraction, bagging_freq=args.bagging_freq)
+                            bagging_fraction=args.bagging_fraction, bagging_freq=args.bagging_freq,
+                            max_bin=args.max_bin, extra_trees=args.extra_trees)
     t0 = time.perf_counter()
     model = fit(X, y, q, params, args.trees)
     fit_s = time.perf_counter() - t0
@@ -114,7 +114,7 @@ def main():
           f"single_field_copies={args.single_field_copies}, {fit_s:.0f}s)")
     print(f"params: {params}")
     print(f"train nDCG@10 = {ndcg10(model, X[:n_clean], y[:n_clean], q[:n_clean]):.4f}")
-    if dev is not None and not args.use_dev:
+    if dev is not None:
         Xd, yd, qd = stack(dev)
         if args.query_ranks:
             ranks = np.empty_like(Xd)
@@ -123,7 +123,8 @@ def main():
             for a, b in zip(starts, ends):
                 ranks[a:b] = within_query_ranks(Xd[a:b])
             Xd = np.hstack([Xd, ranks]).astype(np.float32)
-        print(f"dev   nDCG@10 = {ndcg10(model, Xd, yd, qd):.4f}")
+        label = "dev nDCG@10 (in-training, dev rows were fit)" if args.use_dev else "dev   nDCG@10"
+        print(f"{label} = {ndcg10(model, Xd, yd, qd):.4f}")
 
 
 if __name__ == "__main__":

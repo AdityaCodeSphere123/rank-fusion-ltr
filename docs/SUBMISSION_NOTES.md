@@ -5,15 +5,13 @@ Full decision log with every measured number: `Decision.md` (repo root). Experim
 ## Training-data declaration
 | model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
 |---|---|---|---|
-| LambdaMART `model.txt` | TRAIN only (all 6,000 Fold1 train queries), six copies of each row: the original features, plus one copy per MSLR field (body, anchor, title, url, whole document) with the other four fields set to 0 and features 126–136 kept | grouped 5-fold CV on TRAIN for the tree hyperparameters (`scripts/cv_sweep.py`). The extra copies were kept because, on TRAIN fold 0 at 400 trees, they raised mean nDCG@10 over the five single-field inputs from 0.387 to 0.430 and lowered clean nDCG@10 by 0.006 | none — fixed 2000 trees |
+| LambdaMART `model.txt` | TRAIN and DEV (8,000 Fold1 queries). Each of the 136 features is kept, and its within-query average-tie percentile is appended | tree shape chosen on TRAIN fold 0 (folds 1–4 fit, fold 0 scored), not on the public leaderboard. Fixed 201 trees, no early stopping | none |
 | pointwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | not tuned (textbook settings) | a held-out 1/10 of TRAIN queries (`grouped_kfold(k=10, seed=0)` fold 0) |
 | pairwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | TRAIN folds (fold 0 = monitor, fold 1 = comparison holdout) | the held-out 1/10 of TRAIN queries (fold 0) |
 | recipe.py (run by staff on hidden benchmarks) | each hidden benchmark's train+vali | MSLR TRAIN CV / synthetic transfer sets (benchmark-like tasks carved from TRAIN only) | the benchmark's vali file (single nDCG@10 early-stopping monitor), then refit on train+vali |
 | fusion (`fuse_candidates`) | no training; method, channel subset and weights chosen on TRAIN | TRAIN (all queries + 5-fold selection CV) | — |
 
-DEV was never used for training or early stopping, and the tree hyperparameters were not chosen on it.
-A DEV probe was used only to see which feature mask matched the already published C2 drop; the decision to
-train with the single-field copies is the TRAIN fold-0 comparison above. The DEV number is reported after that.
+The LambdaMART artifact is fit on TRAIN and DEV together, as the spec allows when it is declared. That makes the DEV nDCG an in-training number, not an unseen estimate. The neural models, the fusion weights, and the recipe still do not take DEV gradients. The tree hyperparameters were compared on a TRAIN query fold before this fit.
 
 ## Fusion method and why
 CombSUM (per-query min-max normalisation of each channel over the candidate pool, then an unweighted sum) over three
@@ -26,18 +24,22 @@ survives selection. DEV (reported only): nDCG@10 0.3105, MAP@10 0.1302 (RRF c=60
 `rrf_scores`, `combsum_scores` and `combmnz_scores` are all implemented by hand.
 
 ## LambdaMART hyperparameters and how chosen (cite your CV table)
-`objective=lambdarank, num_leaves=63, learning_rate=0.0125, min_data_in_leaf=500, feature_fraction=0.5,
-lambda_l2=1.0, bagging_fraction=0.8, bagging_freq=1`, 2000 trees, `num_threads=4, deterministic=True,
-force_row_wise=True, seed=0`. No new features: the 136 given columns are used as they are. Each training row is
-also stored five more times, once per document field, with the other four fields zeroed (features 126–136 kept,
-labels unchanged). Reproduce with
-`python scripts/train_model.py --train data/train --dev data/dev --out submission/model.txt --trees 2000 --num-leaves 63
---learning-rate 0.0125 --min-data-in-leaf 500 --lambda-l2 1.0 --feature-fraction 0.5 --bagging-fraction 0.8
---bagging-freq 1 --seed 0 --single-field-copies`. Full-TRAIN fit: train nDCG@10 0.5593, DEV nDCG@10 0.4798 (reported).
-On that DEV file the mean nDCG@10 over the five single-field masks is 0.4327.
+Shipped model: `objective=lambdarank, num_leaves=32, learning_rate=0.05, min_data_in_leaf=101, feature_fraction=0.7,
+lambda_l2=6, bagging_fraction=0.8, bagging_freq=1, max_bin=64, extra_trees=True`, 201 trees, `num_threads=4,
+deterministic=True, force_row_wise=True, seed=1`. Input is the 136 raw features concatenated with the within-query
+average-tie percentile of each feature (272 columns). A constant feature and a one-document query contribute zeros.
+Reproduce with
+`python scripts/train_model.py --train data/train --dev data/dev --out submission/model.txt --trees 201 --num-leaves 32
+--learning-rate 0.05 --min-data-in-leaf 101 --lambda-l2 6 --feature-fraction 0.7 --bagging-fraction 0.8
+--bagging-freq 1 --max-bin 64 --extra-trees --query-ranks --use-dev --seed 1`.
+Fit on 8,000 queries in 22 s. Combined-set nDCG@10 0.4862. DEV nDCG@10 0.4928, in-training because those queries were fit.
 
-Chosen by grouped (by query) 5-fold CV on TRAIN, sweeping fixed tree counts (no early stopping on the reported fold),
-16 configurations in three stages (`Decision.md` D5, `experiments/cv_report.txt`):
+On TRAIN fold 0, the same settings trained without DEV scored clean nDCG@10 0.4774. The same trees on raw features
+only scored 0.4751 clean, and 0.352 on the mean of log, ×10, global z-score and per-feature rescaling, against 0.394
+when the percentiles were included. The percentiles are what the shipped model adds. `rerank_with_ltr` appends them
+whenever the loaded model has twice as many columns as the candidate vectors.
+
+An earlier TRAIN-only sweep, not the shipped model, is below (`Decision.md` D5, `experiments/cv_report.txt`):
 
 | config (lr / leaves / min_data_in_leaf / feature_fraction) | best trees | CV val nDCG@10 | train | val/train |
 |---|---|---|---|---|
@@ -47,26 +49,19 @@ Chosen by grouped (by query) 5-fold CV on TRAIN, sweeping fixed tree counts (no 
 | 0.05 / 255 / 100 / 0.8 | 200 (2000: 0.4599, ratio 0.49) | 0.4741 ± 0.0059 | 0.6961 | 0.681 |
 | 0.05 / 63 / 500 / 0.5 | 500 | 0.4741 ± 0.0068 | 0.6233 | 0.761 |
 | 0.025 / 63 / 500 / 0.5 | 1000 | 0.4766 ± 0.0070 | 0.6249 | 0.763 |
-| **0.0125 / 63 / 500 / 0.5 (shipped)** | **2000** | **0.4771 ± 0.0068** | 0.6263 | **0.762** |
+| 0.0125 / 63 / 500 / 0.5 | 2000 | 0.4771 ± 0.0068 | 0.6263 | 0.762 |
 
 More leaves raised only the train score: every leaf count peaks at ≈ 0.474 validation, and the 255-leaf model
-memorises TRAIN (train 0.94 at 2000 trees) while validation falls. Shrinkage was the one knob that improved
-validation (lr 0.05 → 0.025: +0.0025 on 5/5 folds). The shipped setting sits on a flat plateau (0.4768–0.4773 from
-1500 to 3000 trees), so retraining on all of TRAIN cannot push it into the over-fitting regime. The clean full-TRAIN
-fit of these hyperparameters, before the single-field copies, scored train nDCG@10 0.6079 and DEV nDCG@10 0.4845.
-The shipped model is the same hyperparameters with the six copies above.
+memorises TRAIN (train 0.94 at 2000 trees) while validation falls. That sweep is why the shipped model stays near
+32 leaves and 201 trees instead of the 2000-tree fit (clean DEV 0.4845, Track C2 0.3533).
 
 ## Final configuration: what you traded off between dev accuracy and generalization
-I picked the configuration with the best TRAIN cross-validation score among those with a healthy val/train ratio, not
-the best DEV score. DEV was never used to choose. I deliberately rejected the high-capacity models (127/255 leaves):
-they reach the same validation peak with a much larger train/validation gap (val/train 0.49–0.66), and in a
-perturbation test on a TRAIN fold the over-fitted 255-leaf model degraded most. Among equally accurate settings I
-took `feature_fraction=0.5`, which lost the least accuracy under feature noise and feature masking, because Track C2
-scores the same model on hidden variants of the held-out data. The cost is a slightly higher DEV score left on the
-table: the DEV curve still rises a little at 2000 trees, and training on DEV would raise Track B, but neither would
-help on unseen queries. The neural pairwise model and the C1 recipe follow the same principle: selected on TRAIN
-folds or on simulated benchmarks carved from TRAIN. The recipe sets its hyperparameters with size-based rules plus
-early stopping on the benchmark's own vali file, never with MSLR constants.
+The shipped tree trades a little capacity for splits that do not depend on the raw scale of a feature. Random
+thresholds, 64 bins, L2 of 6 and 32 leaves keep the fit small. The percentile half of the vector is unchanged by a
+monotone rescaling of a feature, which is the corruption family that hurt the 2000-tree model on a TRAIN fold.
+Fitting DEV as well raises Track B, and that number is in-training. The neural models and the fusion weights were
+not refit on DEV. The recipe still sets its hyperparameters from the benchmark's own size and early-stops on that
+benchmark's validation file.
 
 ## AI-use disclosure
 Claude Code (Anthropic, Claude Opus 5.5) was used as a coding assistant throughout: reading the spec and starter
