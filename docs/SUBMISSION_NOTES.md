@@ -5,7 +5,7 @@ Full decision log with every measured number: `Decision.md` (repo root). Experim
 ## Training-data declaration
 | model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
 |---|---|---|---|
-| LambdaMART `model.txt` | TRAIN and DEV (8,000 Fold1 queries). Each of the 136 features is kept, and its within-query average-tie percentile is appended | tree shape chosen on TRAIN fold 0 (folds 1–4 fit, fold 0 scored), not on the public leaderboard. Fixed 201 trees, no early stopping | none |
+| LambdaMART `model.txt` | TRAIN and DEV (8,000 Fold1 queries). Each row is stored five times: twice as-is, once rescaled, once z-scored, once log1p. Every copy appends within-query percentiles | tree shape chosen on TRAIN fold 0. Fixed 400 trees, no early stopping | none |
 | pointwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | not tuned (textbook settings) | a held-out 1/10 of TRAIN queries (`grouped_kfold(k=10, seed=0)` fold 0) |
 | pairwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | TRAIN folds (fold 0 = monitor, fold 1 = comparison holdout) | the held-out 1/10 of TRAIN queries (fold 0) |
 | recipe.py (run by staff on hidden benchmarks) | each hidden benchmark's train+vali | MSLR TRAIN CV / synthetic transfer sets (benchmark-like tasks carved from TRAIN only) | the benchmark's vali file (single nDCG@10 early-stopping monitor), then refit on train+vali |
@@ -25,14 +25,19 @@ survives selection. DEV (reported only): nDCG@10 0.3105, MAP@10 0.1302 (RRF c=60
 
 ## LambdaMART hyperparameters and how chosen (cite your CV table)
 Shipped model: `objective=lambdarank, num_leaves=32, learning_rate=0.05, min_data_in_leaf=101, feature_fraction=0.7,
-lambda_l2=6, bagging_fraction=0.8, bagging_freq=1, max_bin=64, extra_trees=True`, 201 trees, `num_threads=4,
-deterministic=True, force_row_wise=True, seed=1`. Input is the 136 raw features concatenated with the within-query
-average-tie percentile of each feature (272 columns). A constant feature and a one-document query contribute zeros.
+lambda_l2=6, bagging_fraction=0.8, bagging_freq=1, max_bin=64, extra_trees=True`, 400 trees, `num_threads=4,
+deterministic=True, force_row_wise=True, seed=1`. Each training matrix is the 136 raw columns plus their
+within-query average-tie percentiles. The fit sees two clean copies and one copy each of a per-feature rescaling,
+a global z-score and a log1p, so a split on the raw value is not the only way to separate documents.
 Reproduce with
-`python scripts/train_model.py --train data/train --dev data/dev --out submission/model.txt --trees 201 --num-leaves 32
+`python scripts/train_model.py --train data/train --dev data/dev --out submission/model.txt --trees 400 --num-leaves 32
 --learning-rate 0.05 --min-data-in-leaf 101 --lambda-l2 6 --feature-fraction 0.7 --bagging-fraction 0.8
---bagging-freq 1 --max-bin 64 --extra-trees --query-ranks --use-dev --seed 1`.
-Fit on 8,000 queries in 22 s. Combined-set nDCG@10 0.4862. DEV nDCG@10 0.4928, in-training because those queries were fit.
+--bagging-freq 1 --max-bin 64 --extra-trees --scale-views --use-dev --seed 1`.
+Fit on 8,000 queries in 201 s. DEV nDCG@10 0.4963, in-training because those queries were fit.
+
+On a held-out TRAIN slice, the same views at 300 trees scored clean nDCG@10 0.468, against 0.462 for the clean copy
+alone, and the mean of log, ×10, z-score and rescaling rose from 0.390 to 0.442. `rerank_with_ltr` still appends
+percentiles whenever the model has twice as many columns as the candidates.
 
 On TRAIN fold 0, the same settings trained without DEV scored clean nDCG@10 0.4774. The same trees on raw features
 only scored 0.4751 clean, and 0.352 on the mean of log, ×10, global z-score and per-feature rescaling, against 0.394
@@ -52,8 +57,8 @@ An earlier TRAIN-only sweep, not the shipped model, is below (`Decision.md` D5, 
 | 0.0125 / 63 / 500 / 0.5 | 2000 | 0.4771 ± 0.0068 | 0.6263 | 0.762 |
 
 More leaves raised only the train score: every leaf count peaks at ≈ 0.474 validation, and the 255-leaf model
-memorises TRAIN (train 0.94 at 2000 trees) while validation falls. That sweep is why the shipped model stays near
-32 leaves and 201 trees instead of the 2000-tree fit (clean DEV 0.4845, Track C2 0.3533).
+memorises TRAIN (train 0.94 at 2000 trees) while validation falls. That sweep is why the shipped model stays at
+32 leaves instead of the 2000-tree fit (clean DEV 0.4845, Track C2 0.3533).
 
 ## Final configuration: what you traded off between dev accuracy and generalization
 The shipped tree trades a little capacity for splits that do not depend on the raw scale of a feature. Random

@@ -27,6 +27,15 @@ def _resolve(path, name):
     return os.path.join(path, name) if os.path.isdir(path) else path
 
 
+def _query_ranks(X, q):
+    ranks = np.empty(np.shape(X), dtype=np.float64)
+    starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+    ends = np.r_[starts[1:], len(q)]
+    for a, b in zip(starts, ends):
+        ranks[a:b] = within_query_ranks(np.asarray(X[a:b], dtype=np.float64))
+    return ranks.astype(np.float32)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", default="data/toy")
@@ -50,6 +59,9 @@ def main():
     ap.add_argument("--query-ranks", action="store_true",
                     help="append within-query feature ranks, the same transform rerank_with_ltr applies "
                          "when the model has twice as many features as the input")
+    ap.add_argument("--scale-views", action="store_true",
+                    help="add rescaled, z-scored and log1p copies of the rows, each with its own "
+                         "within-query percentiles, so splits are not tied to the raw scale")
     ap.add_argument("--single-field-copies", action="store_true",
                     help="append five copies of the rows, each keeping one MSLR field "
                          "(body, anchor, title, url, whole document) plus features 126-136")
@@ -92,7 +104,21 @@ def main():
         X = np.vstack(copies_x)
         y = np.concatenate(copies_y)
         q = np.concatenate(copies_q)
-    if args.query_ranks:
+    if args.scale_views:
+        rng = np.random.RandomState(args.seed)
+        scale = np.exp(rng.normal(0, 1.0, size=X.shape[1])).astype(np.float32)
+        raw = X
+        views = [
+            raw, raw,
+            raw * scale,
+            (raw - raw.mean(0)) / np.clip(raw.std(0), 1e-6, None),
+            np.sign(raw) * np.log1p(np.abs(raw)),
+        ]
+        pieces = [np.hstack([v.astype(np.float32), _query_ranks(v, q)]) for v in views]
+        X = np.vstack(pieces).astype(np.float32)
+        y = np.tile(y, len(views))
+        q = np.tile(q, len(views))
+    elif args.query_ranks:
         # Ranks are computed inside each copy, so a noisy copy does not inherit the clean order.
         ranks = np.empty_like(X)
         starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
@@ -111,12 +137,12 @@ def main():
     model.save_model(args.out)
     print(f"trained on {len(train_used)} queries ({'train+dev' if args.use_dev else 'train only'}) -> {args.out} "
           f"({args.trees} trees, feature_noise={args.feature_noise}, "
-          f"single_field_copies={args.single_field_copies}, {fit_s:.0f}s)")
+          f"single_field_copies={args.single_field_copies}, scale_views={args.scale_views}, {fit_s:.0f}s)")
     print(f"params: {params}")
     print(f"train nDCG@10 = {ndcg10(model, X[:n_clean], y[:n_clean], q[:n_clean]):.4f}")
     if dev is not None:
         Xd, yd, qd = stack(dev)
-        if args.query_ranks:
+        if args.query_ranks or args.scale_views:
             ranks = np.empty_like(Xd)
             starts = np.flatnonzero(np.r_[True, qd[1:] != qd[:-1]])
             ends = np.r_[starts[1:], len(qd)]
