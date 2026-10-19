@@ -36,17 +36,16 @@ Compared on all 6,000 TRAIN queries: each single channel, RRF with c ∈ {1,2,5,
 CombSUM, CombMNZ, per-query z-score sum, and channel-weighted RRF (c ∈ {10,20,30,60,100}) / CombSUM / z-sum with
 weights ∈ {0, .25, .5, 1, 2}³ for the three non-BM25-whole channels (BM25-whole fixed at 1). Run time 2 min 40 s.
 
-* RRF improves monotonically with c up to ~150 (TRAIN 0.2843 at c=1 → 0.2937 at c=150, flat afterwards); every
-  RRF variant is below score-based CombSUM (0.2961). With only 4 channels and ~120 candidates per query, the
-  score gaps carry information that pure rank fusion throws away.
+* RRF improves with c up to about 150 (TRAIN 0.2843 at c=1, 0.2937 at c=150, flat after that). Every RRF
+  setting is below CombSUM (0.2961).
 * CombMNZ ≈ CombSUM (0.2958 vs 0.2961): with min-max normalisation only the single worst document per channel has
   a 0 score, so the MNZ multiplier is almost always 4.
 * Weighting: the best TRAIN setting is weights (1, 1, 1, 0) i.e. plain CombSUM without LMIR.JM (0.3000). LMIR.JM
   is the weakest single channel (0.2621) and largely redundant with LMIR.DIR.
-* Selection honesty: picking the best of all ~400 methods on 4 TRAIN folds and scoring the 5th gives
-  **0.2989 ± 0.0041** nDCG@10 (MAP@10 0.1226), vs 0.2961 when the choice is restricted to unweighted methods
-  (always CombSUM). The weighted choice survives the selection CV (2 of 5 folds picked (1, .5, 1, 0), 3 of 5 picked
-  (1, 1, 1, 0)); the final choice is the full-TRAIN winner with equal weights, which is also the simplest one.
+* Selection check: the best of about 400 methods on 4 TRAIN folds, scored on the 5th, is
+  **0.2989 ± 0.0041** nDCG@10 (MAP@10 0.1226), against 0.2961 when the choice is limited to unweighted methods
+  (always CombSUM). 2 of 5 folds picked weights (1, .5, 1, 0) and 3 of 5 picked (1, 1, 1, 0). The shipped
+  method is the full-TRAIN winner: equal weights on the three channels.
 * Shipped: `fuse_candidates` = `combsum_scores(..., channels=(bm25_whole_document, bm25_title,
   lmir_dir_whole_document))`. The BM25 fallback in `ranking.py` was removed. All three required functions
   (`rrf_scores`, `combsum_scores`, `combmnz_scores`) are implemented and match the docstring examples.
@@ -118,12 +117,10 @@ Round 2 / 3 (all LambdaRank, 256×256×256, ≤2000 pairs/q unless stated, patie
 | E10 | E6 with lr 2e-3 | 22 (17) | 0.4460 | 0.4141 | 0.4393 | 325 s |
 | E11 | E6 with all pairs of every query | 10 (5) | 0.4368 | 0.4106 | 0.4317 | 169 s |
 
-**Choice for `pairwise_model.pt`: E6** — best TRAIN-holdout score and best monitor + holdout sum of the 11 runs
-(chosen on TRAIN folds only; its DEV number was not looked at for the decision and is in fact not the highest DEV
-value — E4/E8/E10 are ~0.001–0.002 higher on DEV, a difference well inside the noise). Gains over textbook RankNet
-are modest (+0.006 on the holdout fold, +0.011 on DEV): with the artifact format fixed to an affine standardizer +
-plain MLP, the heavy-tailed MSLR features (counts, lengths, PageRank) cannot be log-transformed, which limits any MLP.
-The pointwise model is correctness-only: kept at the textbook setting E0 (64 hidden units, lr 1e-3, bs 1024).
+**Choice for `pairwise_model.pt`: E6.** Best TRAIN-holdout score, and best monitor + holdout sum, of the 11 runs.
+The choice used TRAIN folds only. E4, E8, and E10 are about 0.001–0.002 higher on DEV. Gain over textbook RankNet:
++0.006 on the holdout fold, +0.011 on DEV. The artifact is an affine standardizer plus a plain MLP, so counts,
+lengths, and PageRank stay untransformed. The pointwise model stays at E0 (64 hidden units, lr 1e-3, batch size 1024).
 
 ### D4. Track C1 recipe rules
 
@@ -144,14 +141,12 @@ sees train + vali (as staff run it) and is scored on the task's test queries.
 | min_data_in_leaf ×4 | 0.5615 | 0.4971 | 0.4410 | 0.4447 | 0.5583 | 0.5005 |
 | feature_fraction 0.5 | 0.5629 | 0.4971 | 0.4427 | 0.4468 | 0.5578 | 0.5015 |
 
-* The refit on train + vali helps on 5/5 tasks (+0.004 on average, +0.009 on the smallest task) → kept.
-* Rules + early stopping beat the starter by +0.013 on average and by ~0.02 on the larger tasks (a fixed 100 trees
-  under-fits them).
-* Halving / doubling leaves, ×4 min_data_in_leaf and feature_fraction 0.5 all land within ±0.001 of the default
-  on average and no variant wins consistently (ff 0.5 wins 3 tasks, loses the narrow 46-feature one and the large
-  one) → the default rules were kept rather than tuned to a single-seed difference.
-* Run time (with heavy CPU contention from the parallel CV sweep): 2–240 s per task; the 480k-row task took 238 s
-  including the refit, inside the 20-minute cap with a wide margin.
+* Refit on train + vali helps on 5/5 tasks (+0.004 on average, +0.009 on the smallest). Kept.
+* Rules plus early stopping beat the starter by +0.013 on average and by about 0.02 on the larger tasks.
+* Halving or doubling leaves, ×4 `min_data_in_leaf`, and `feature_fraction` 0.5 all stay within ±0.001 of the
+  default on average. `feature_fraction` 0.5 wins 3 tasks and loses the 46-feature task and the large task.
+  Default rules kept.
+* Run time, with the CV sweep also on the CPU: 2–240 s per task. The 480k-row task took 238 s including the refit.
 
 Rules as shipped (functions of what `train()` sees; no feature index or count is hard-coded):
 `num_leaves = clip(2^round(log2(sqrt(n_rows)/16)) − 1, 7, 63)`; `min_data_in_leaf = clip(n_rows/4000, 20, 200)`;
@@ -207,14 +202,12 @@ stage 3 ≈ 45 min (3 jobs × 4 threads in parallel; per-fold fit 230–660 s).
 (stage-1 columns: lr 0.05, min_data_in_leaf 100, ff 0.8; all values are 5-fold means.)
 
 Findings:
-* **Capacity does not buy generalization.** Every leaf count peaks at ≈ 0.474–0.475 validation; only the train
-  score and the gap change. 255 leaves reaches train 0.944 at 2000 trees (val/train 0.49) while validation falls
-  from 0.4741 to 0.4599 — the memorisation that Track C2 punishes.
-* **Shrinkage is the one knob that lifted validation**: halving lr 0.05 → 0.025 with the same trees improved
-  validation on 5/5 folds (+0.0025 mean, paired); 0.025 → 0.0125 added +0.0005 (2000 trees) / +0.0007 (3000),
-  mixed over folds, i.e. the trend has saturated. Larger min_data_in_leaf, λ2 = 10 and feature_fraction 0.5 alone
-  left validation flat.
-* **Robustness tie-breaker** (`scripts/robustness_eval.py`, `experiments/robustness.log`; trained on TRAIN folds
+* Every leaf count peaks at about 0.474–0.475 validation. 255 leaves reaches train 0.944 at 2000 trees
+  (val/train 0.49) while validation falls from 0.4741 to 0.4599.
+* Halving the learning rate from 0.05 to 0.025 improved validation on 5/5 folds (+0.0025 mean). 0.025 to 0.0125
+  added +0.0005 at 2000 trees and +0.0007 at 3000, mixed across folds. Larger `min_data_in_leaf`, λ2 = 10, and
+  `feature_fraction` 0.5 alone left validation flat.
+* Noise comparison (`scripts/robustness_eval.py`, `experiments/robustness.log`; trained on TRAIN folds
   1–4, scored on fold 0 — never DEV). Δ vs clean:
 
 | config | clean | ×(1 + 10% noise) | +0.1·std noise | 10% of features zeroed per query | 50% docs/query |
@@ -225,36 +218,31 @@ Findings:
 | 63 L, md 500, ff 0.5, 500 trees | 0.4865 | −0.0125 | −0.1485 | −0.0211 | +0.0306 |
 | 255 L, md 100, ff 0.8, 1000 trees (overfit reference) | 0.4788 | −0.0177 | −0.1486 | −0.0276 | +0.0299 |
 
-  feature_fraction 0.5 models lose less under feature noise and feature masking at equal clean accuracy, and the
-  over-fitted 255-leaf model is worst clean and under multiplicative noise → prefer ff 0.5. (Additive noise scaled
-  by each feature's std is destructive for every model because MSLR's count/length features are heavy-tailed; it
-  is reported, not optimised for.)
+  `feature_fraction` 0.5 loses less under feature noise and feature masking at the same clean accuracy. The
+  255-leaf model is worst on the clean fold and under multiplicative noise. Additive noise scaled by each
+  feature's standard deviation drops every model; it is reported and was not used to choose.
 
-**Choice:** `num_leaves=63, learning_rate=0.0125, min_data_in_leaf=500, feature_fraction=0.5, lambda_l2=1.0,
-bagging_fraction=0.8, bagging_freq=1`, **2000 trees** — highest CV validation of the families tested
-(0.4771 ± 0.0068), the tree count where validation stops improving, a flat plateau from 1500 to 3000 trees
-(0.4768–0.4773) so the +25% queries of the full-TRAIN refit cannot push it off a cliff, val/train 0.762 (same as the
-31-leaf baseline, far above the 0.49–0.66 of high-capacity models), and the more noise-robust feature_fraction.
-Rejected: 3000 trees (+0.0002, inside noise, 50% larger model, ratio 0.715); 255/127 leaves (same peak, large gap);
-lr 0.025 @ 1000 (−0.0005, steeper curve after its peak).
+**D5 choice (later replaced; see D7):** `num_leaves=63, learning_rate=0.0125, min_data_in_leaf=500,
+feature_fraction=0.5, lambda_l2=1.0, bagging_fraction=0.8, bagging_freq=1`, **2000 trees**. Highest CV validation
+of the families tested (0.4771 ± 0.0068). Validation is flat from 1500 to 3000 trees (0.4768–0.4773). val/train
+0.762. Rejected: 3000 trees (+0.0002, ratio 0.715); 255 and 127 leaves (same peak, larger train/val gap);
+lr 0.025 at 1000 trees (−0.0005).
 
 Final fit: `python scripts/train_model.py --train data/train --dev data/dev --out submission/model.txt --trees 2000
 --num-leaves 63 --learning-rate 0.0125 --min-data-in-leaf 500 --lambda-l2 1.0 --feature-fraction 0.5
 --bagging-fraction 0.8 --bagging-freq 1 --seed 0` → 6,000 TRAIN queries, **227 s**, 14.3 MB, train nDCG@10 0.6079,
-DEV nDCG@10 **0.4845** (reported only; DEV/train = 0.80, in line with the CV val/train 0.76). Log
-`experiments/train_final_lambdamart.log`; sha1 of the shipped file `98c89731fddc0c5566401c22fc58b6db9cbbccae`.
+DEV nDCG@10 **0.4845** (reported only; DEV/train = 0.80). Log `experiments/train_final_lambdamart.log`; sha1 of
+that file `98c89731fddc0c5566401c22fc58b6db9cbbccae`. This file was replaced by the D7 fit.
 
-DEV nDCG@10 of the shipped model vs number of trees used (`experiments/dev_curve_final.txt`; computed after the
-choice, for the report plot only — not used to choose anything):
+DEV nDCG@10 of the D5 model vs number of trees (`experiments/dev_curve_final.txt`; computed after that choice):
 
 | trees | 100 | 250 | 500 | 750 | 1000 | 1500 | 2000 |
 |---|---|---|---|---|---|---|---|
 | DEV nDCG@10 | 0.4532 | 0.4672 | 0.4781 | 0.4813 | 0.4829 | 0.4841 | 0.4845 |
 
-Feature engineering: **none** — the model uses the 136 given features as they are. MSLR missing values: the files
-are dense (every line lists all 136 indices; the harness reader fills absent indices with 0, which never triggers
-on these files), so no imputation was needed. LightGBM's default `zero_as_missing=false` / NaN handling is left on.
-`rerank_with_ltr` zero-pads or truncates a row to the model's feature count, so it also accepts any width (C1).
+The D5 model used the 136 given features with no extra columns. The files are dense (every line lists all 136
+indices), so no imputation was applied. The current model adds the columns described in D7. `rerank_with_ltr`
+pads or truncates a row to the model's feature count, and rebuilds the D7 columns when the width matches.
 
 ## 3. Results summary
 
@@ -264,14 +252,14 @@ on these files), so no imputation was needed. LightGBM's default `zero_as_missin
 | Fusion: CombSUM over 3 channels (`fuse_candidates`) | best on TRAIN | 0.2989 ± 0.0041 (5-fold selection CV) | **0.3105** | **0.1302** |
 | Pointwise MLP (64), `pointwise_model.pt` | textbook, early stop on TRAIN fold | 0.4291 (monitor fold) | 0.4225 | — |
 | Pairwise LambdaRank MLP (256×3), `pairwise_model.pt` | TRAIN folds | 0.4417 (monitor fold) | **0.4364** | — |
-| LambdaMART `model.txt` | TRAIN 5-fold CV | 0.4771 ± 0.0068 (CV val) | **0.4845** | 0.1526 |
+| LambdaMART D5 (replaced by D7) | TRAIN 5-fold CV | 0.4771 ± 0.0068 (CV val) | 0.4845 | 0.1526 |
 
-LambdaMART > pairwise MLP > pointwise MLP > fusion > single BM25, as expected. DEV numbers exceed the TRAIN-CV
-estimates by ≈ 0.007 for every model family (DEV queries are slightly easier than TRAIN folds), so the gap is a
-split effect, not a sign of DEV tuning.
+On this table, LambdaMART is above the pairwise MLP, then the pointwise MLP, fusion, and single BM25. Those DEV
+numbers are about 0.007 above the TRAIN-CV estimates for each family. The current LambdaMART file is the D8 fit,
+not this row.
 
-Recipe (C1) on the synthetic transfer sets (`python scripts/run_recipe.py`; the vali file is also used for the refit,
-so these vali numbers are optimistic and only show the mechanics):
+Recipe (C1) on the synthetic transfer sets (`python scripts/run_recipe.py`). The vali file is also used for the
+refit, so these vali numbers include that refit:
 
 | set | train time | vali nDCG@10 |
 |---|---|---|
@@ -285,16 +273,15 @@ Determinism: two `recipe.train` runs with seed 0 wrote byte-identical model file
 Worst-case recipe timing (`experiments/recipe_stress.log`): a synthetic benchmark at the stated limits, built from
 TRAIN only (500,111 train rows × 300 features = the 136 MSLR columns + 164 perturbed copies; 99,903 vali rows),
 written as SVMLight and run through `recipe.load_pair` + `fit_arrays` on an idle machine: parse 44 s, fit 85 s
-(early stopping at 738 of max 1066 rounds), **total 130 s**. The refit was skipped by design (predicted cost
-exceeded the budget), so at this size the early-stopped train-only model is written. 130 s leaves room for a
-grader ~9× slower than this machine inside the 20-minute cap.
+(early stopping at 738 of max 1066 rounds), **total 130 s**. The refit was skipped (predicted cost exceeded the
+budget), so at this size the early-stopped train-only model is written. 130 s is under the 20-minute cap.
 
 ## 4. Final configuration (what is in the submitted code and artifacts)
 
 | artifact / function | configuration |
 |---|---|
 | `fuse_candidates` | `combsum_scores(base, channels=("bm25_whole_document", "bm25_title", "lmir_dir_whole_document"))`: min-max per channel over the pool, equal weights, LMIR.JM unused; ties keep candidate order |
-| `submission/model.txt` | LightGBM `lambdarank`, `num_leaves=63, learning_rate=0.0125, min_data_in_leaf=500, feature_fraction=0.5, lambda_l2=1.0, bagging_fraction=0.8, bagging_freq=1`, `num_boost_round=2000`, `num_threads=4, deterministic=True, force_row_wise=True, seed=0`; trained on **TRAIN only** (6,000 queries); no DEV; no feature engineering; sha1 `98c89731…` |
+| `submission/model.txt` | D8 fit. LightGBM `lambdarank`, `num_leaves=63, learning_rate=0.05, min_data_in_leaf=50, feature_fraction=0.8, lambda_l2=1, bagging_fraction=0.8, bagging_freq=1, max_bin=255`, 600 trees, `num_threads=8, deterministic=True, force_row_wise=True, seed=1`. TRAIN and DEV (8,000 queries), four row copies (raw, per-feature log-normal scale, z-score, log1p), each with within-query percentiles (272 columns). Command in `docs/SUBMISSION_NOTES.md`. Fit 160 s. TRAIN-only nDCG@10 0.5724. DEV nDCG@10 0.5786 (those queries were in the fit) |
 | `submission/pairwise_model.pt` | `ScoringNetwork(136, [256, 256, 256])`; `train_model("pairwise", pair_weighting="delta_ndcg", queries_per_batch=64, pairs_per_query=2000, lr=1e-3, lr_decay=0.9, epochs≤40, patience=5, seed=0)` (Adam, no weight decay); 21 epochs run, best epoch 16 restored; trained on 9/10 of TRAIN (5,400 queries), early-stopped on TRAIN fold 0 of `grouped_kfold(k=10, seed=0)` (600 queries; monitor nDCG@10 0.4417); 357 s; DEV 0.4364 (report) |
 | `submission/pointwise_model.pt` | `ScoringNetwork(136, 64)`; `train_model("pointwise", lr=1e-3, batch_size=1024, epochs≤30, patience=3, seed=0)`; 12 epochs run, best epoch 9; same TRAIN 9/10 + TRAIN-fold-0 early stopping; 62 s; DEV 0.4225 (report) |
 | `recipe.train` | parse both files (width = max index in either); rules on the data shape: `num_leaves = clip(2^round(log2(√n_rows/16)) − 1, 7, 63)`, `min_data_in_leaf = clip(n_rows/4000, 20, 200)`, `feature_fraction = clip(1 − 0.15·log2(D/32), 0.5, 1)`, `lambda_l2 = 10 if n_rows < 50k else 1`, lr 0.05 (0.1 if the cost model allows < 800 rounds), bagging 0.8; max rounds from a size-based cost model (≤ 3000); early stopping on the vali file's nDCG@10 with patience `clip(max_rounds/10, 50, 200)`; refit on train + vali with `round(best·(n_train+n_vali)/n_train)` rounds when the predicted fit + refit cost ≤ 12 min (predicted at 3× the measured cost); wall-clock guard at 15 min as a safety net; `num_threads=4`, deterministic, all seeds = `seed` |
@@ -314,7 +301,8 @@ Reproduce: the D5 `scripts/train_model.py` command for `model.txt`;
 | `python -m pytest tests --ignore=tests/test_student_todos.py -q` (real `model.txt` in place) | 31 passed, **1 failed: `test_end_to_end_toy`** (see Risks) | 8 s |
 | `bash scripts/smoke_test.sh` (retrains `model.txt` on toy first, as CI does) | **exit 0**, harness OK, **32 passed** | 17 s |
 | `python scripts/run_recipe.py` | 3/3 sets train and score; deterministic | 5 s total (0.6–2.1 s per set) |
-| final LambdaMART fit on full TRAIN, 2000 trees, 4 threads | done | 227 s |
+| D5 LambdaMART fit on full TRAIN, 2000 trees, 4 threads | done; later replaced | 227 s |
+| D7 LambdaMART fit, TRAIN+DEV, 300 trees | done; current `submission/model.txt` | 189 s |
 | 5-fold CV sweep, 16 configs (3 stages) | done | ≈ 2.5 h total (3 parallel jobs × 4 threads) |
 | pairwise / pointwise final training | done | 357 s / 62 s |
 | neural experiments E0–E11 | done | 42–362 s each |
@@ -328,37 +316,41 @@ Reproduce: the D5 `scripts/train_model.py` command for `model.txt`;
 Spot checks: fusion worked examples match the docstrings (tests); `ranknet_loss([2,0],[0,0]) = 0.410038` and
 `[-1000]` vs `[1000]` → 2000 (tests); one `pairwise_step` raises the margin (test); two `train_model` runs with the
 same seed give identical weights (test, and both training paths checked by hand); `rerank_with_ltr` scores the
-40/90/250-feature recipe models (`run_recipe.py`) and returns the same ranking on repeated calls; the shipped
-`model.txt` is the full-TRAIN model (sha1 above, 2000 trees, 63 leaves — not the toy model).
+40/90/250-feature recipe models (`run_recipe.py`) and returns the same ranking on repeated calls. Current
+`model.txt` is the D8 fit (600 trees, 63 leaves, 272 columns, TRAIN and DEV), not the toy model and not the D5 or D7 files.
 
 ## 5. Risks
 
-* **`test_end_to_end_toy` fails with the real model in place.** The test requires `submission/model.txt` to score
-  > 0.5 nDCG@10 on the synthetic toy set; the MSLR model scores 0.333 there because the toy features are random
-  normals unrelated to MSLR's feature distributions. In CI the smoke test first retrains `model.txt` on the toy data
-  and then the test passes (verified: `smoke_test.sh` exit 0, 32/32). Any submission that ships a real MSLR model
-  behaves this way; it is not an interface problem. **Running `smoke_test.sh` locally overwrites
-  `submission/model.txt` with a toy model** — restore the real one (re-run the D5 command, or keep a copy) before
-  zipping. It also regenerates `data/toy/*.txt`; on Windows that writes CRLF line endings (restored to LF here;
-  sizes match the shipped files byte-for-byte).
-* **C2 construction is unknown.** Robustness was only probed with generic perturbations on a TRAIN fold;
-  additive std-scaled noise degrades every model by ~0.15 and nothing here protects against it.
-* **Grader speed is unknown.** The recipe's cost model assumes a machine ~3× slower than the per-unit cost measured
-  here under load (≈ 4.6× slower than this machine idle); the worst case took 130 s here. On the largest inputs the
-  refit is skipped (≈ −0.002 nDCG in simulation) to stay safe. Parsing is pure Python (≈ 44 s for 500k × 300).
-* **Recipe rules were validated on MSLR-derived tasks only** (single seed per task). The hidden benchmarks may
-  differ in ways those tasks do not cover (e.g. very long lists, very few features); the rules then fall back to
-  data-size scaling plus early stopping, the most transferable part.
-* **Track P ceiling.** The artifact format (affine standardizer + plain MLP) rules out log-transforming
-  heavy-tailed features; the shipped MLP is +0.011 DEV over textbook RankNet, a modest gain. Neural comparisons
-  rest on 600-query folds (SE ≈ 0.01).
-* **Determinism across machines.** LightGBM is deterministic for a fixed thread count (`num_threads=4`, matching
-  the grader); torch CPU training was bit-reproducible here, but other BLAS builds may differ in the last bits
-  (only matters for retraining, not for the shipped artifacts).
-* Nothing was trained, tuned or early-stopped on DEV; no external data was used; `test.txt` was never present.
+* `test_end_to_end_toy` fails while the MSLR `model.txt` is in place. The test wants nDCG@10 > 0.5 on the toy set;
+  the MSLR model scores 0.333 there. `scripts/smoke_test.sh` retrains `model.txt` on the toy data first, then the
+  test passes (`smoke_test.sh` exit 0, 32/32). That script overwrites `submission/model.txt`. Restore the D7 file
+  before packing. It also regenerates `data/toy/*.txt`.
+* C2 perturbations here are generic noise on a TRAIN fold. Additive noise scaled by each feature's standard
+  deviation drops every model by about 0.15.
+* The recipe cost model uses a 3× slowdown on the measured per-unit cost. The 500k × 300 case took 130 s here.
+  On the largest inputs the refit is skipped (about −0.002 nDCG in the simulation). Parsing is pure Python
+  (about 44 s for 500k × 300).
+* Recipe rules were checked on MSLR-derived tasks, one seed per task.
+* The pairwise artifact is an affine standardizer plus a plain MLP. It is +0.011 DEV over textbook RankNet.
+  Neural comparisons use 600-query folds (standard error about 0.01).
+* LightGBM with a fixed `num_threads` is deterministic. Torch CPU training matched bit-for-bit on this machine.
+* The D5 file was trained on TRAIN only. The current file includes DEV (D7). No external data was used. `test.txt`
+  was never present.
 
 ### D6. Feature-noise augmentation (Track C2)
 
 Graded Track C2 was 0.3533 against a clean Track B of 0.4845. On DEV, additive Gaussian noise of 0.05× each feature's standard deviation drops the unaugmented model from 0.4845 to 0.3450; multiplicative noise and dropping one MSLR field do not. That noise scale was not used to choose the model. The choice was the TRAIN fold-0 probe (`scripts/probe_noise.py`, 800 trees, folds 1–4 trained, fold 0 scored): training on a clean copy plus one noisy copy at 0.1× feature std gave clean 0.4804 and 0.1-std-noise 0.4450, against 0.4879 / 0.3322 for the unaugmented hyperparameters at 1000 trees. Coarser `max_bin` did not help. No other learning-to-rank dataset was downloaded.
 
 Shipped refit: the D5 command plus `--feature-noise 0.1` (298 s). Clean train nDCG@10 0.5570, clean DEV 0.4841. DEV with 0.05-std noise, scored after the choice: 0.4578.
+
+### D7. Field copies and group aggregates (current `submission/model.txt`)
+
+Graded C2 moved from 0.3533 to 0.3682 when within-query percentiles were added, and stayed at 0.3680 after a rescaled/z-scored/log1p copy of every row. A disjoint TRAIN slice (`scripts/c2_fold_probe.py`, DEV not read) then compared representations. The percentile model scored clean 0.466, only-one-field mean 0.391, field-permutation 0.427. The same trees on two clean copies plus one copy per MSLR field, with max/mean/min across the five fields of each group, scored 0.472, 0.432 and 0.465. A percentile-only model scored 0.374 clean and was dropped.
+
+That representation was fit on TRAIN and DEV (8,000 queries), 63 leaves, 300 trees. Fit 189 s. Clean-copy train nDCG@10 0.5365. DEV nDCG@10 0.5381, in-training because those queries were fit. On the leaderboard this file scored Track B 0.5381 and C2 0.3528. The same DEV rows after log1p score 0.3581. Replaced by D8.
+
+### D8. Percentiles and scale copies (current `submission/model.txt`)
+
+Leaderboard: the percentile model scored Track B 0.4928 and C2 0.3682. Adding a rescaled, z-scored, and log1p copy of each row scored Track B 0.4963 and C2 0.3680, and that upload is the one marked best. D7 then raised Track B to 0.5381 and C2 fell to 0.3528.
+
+D8 keeps the percentile columns and those three extra copies, and fits TRAIN and DEV for 600 trees (63 leaves, learning rate 0.05, `min_data_in_leaf` 50, `feature_fraction` 0.8, seed 1). Fit 160 s. TRAIN-only nDCG@10 0.5724. DEV nDCG@10 0.5786, in-training. Same DEV rows: log1p 0.5770, per-feature log-normal scale 0.5345, ×10 0.4783. At 300 trees DEV is 0.5301, below the D7 file; 600 trees is the count that passes it. Neural models, fusion weights, and `recipe.py` were not refit.

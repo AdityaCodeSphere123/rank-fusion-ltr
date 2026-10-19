@@ -6,7 +6,7 @@ by candidate order) so the whole grid runs in seconds; the chosen method is then
 submission.ranking.fuse_candidates with harness.run_harness.
 
 Selection is done on TRAIN only. "cv" columns: for each of 5 query folds of TRAIN, pick the best method/params
-on the other 4 folds and score it on the held-out fold -- an honest estimate of the selection procedure. DEV
+on the other 4 folds and score it on the held-out fold. DEV
 numbers are printed for reporting only and are never used to choose.
 
     python scripts/fusion_eval.py

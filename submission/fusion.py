@@ -27,18 +27,6 @@ def _channel_ranks(base_scores: Dict[str, Dict[str, float]], channel: str) -> Di
     return {d: r for r, d in enumerate(ordered, start=1)}
 
 
-def weighted_rrf_scores(base_scores: Dict[str, Dict[str, float]], weights: Dict[str, float],
-                        c: float = 60.0) -> Dict[str, float]:
-    """RRF with a weight per channel. Weight 0 skips the channel; all weights 1 is rrf_scores."""
-    fused = {d: 0.0 for d in base_scores}
-    for ch, w in weights.items():
-        if w == 0:
-            continue
-        for d, r in _channel_ranks(base_scores, ch).items():
-            fused[d] += w / (c + r)
-    return fused
-
-
 def minmax_normalize(values: Dict[str, float]) -> Dict[str, float]:
     """Min-max to [0, 1]. A constant channel becomes all zeros."""
     lo, hi = min(values.values()), max(values.values())

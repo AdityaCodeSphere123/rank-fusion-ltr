@@ -4,9 +4,11 @@ fuse_candidates: unweighted CombSUM of BM25 (document and title) and LMIR.DIR.
 LMIR.JM is dropped; on TRAIN every channel-weight grid set it to 0.
 
 rerank_with_ltr: the LightGBM model loaded by prepare(). Rows are padded or
-truncated to the model's width. A model with twice the candidate width was
-trained on raw features plus within-query ranks (within_query_ranks); every
-other width, including recipe.py models, is scored on the raw vectors.
+truncated to the model's width. Two MSLR layouts are recognised. Twice the
+candidate width is raw features plus within-query percentiles. Width
+2*D + 150 (D >= 125) also appends, for each of the 25 field-groups, the max,
+mean and min across the five fields, and the percentiles of those aggregates.
+Every other width, including recipe.py models, is scored on the raw vectors.
 
 prepare() only loads the artifact and raises if it is missing. Both rankers
 return at most k (doc_id, score) pairs, best first, ids drawn only from the
@@ -20,6 +22,13 @@ import numpy as np
 from submission.fusion import combsum_scores
 
 FUSION_CHANNELS = ("bm25_whole_document", "bm25_title", "lmir_dir_whole_document")
+
+# MSLR features 1..125 are 25 groups x 5 fields. The aggregates below are
+# invariant to the order of the five fields, and the max survives when the
+# other four fields are cleared.
+_N_GROUPS = 25
+_N_FIELDS = 5
+_N_AGGS = _N_GROUPS * 3
 
 _MODEL = None
 _N_FEATURES = None
@@ -77,6 +86,12 @@ def within_query_ranks(X: np.ndarray) -> np.ndarray:
     return out
 
 
+def group_aggregates(X: np.ndarray) -> np.ndarray:
+    """Max, mean and min across the five fields of each of the 25 MSLR groups."""
+    g = np.asarray(X[:, :_N_GROUPS * _N_FIELDS], dtype=np.float64).reshape(X.shape[0], _N_GROUPS, _N_FIELDS)
+    return np.concatenate([g.max(axis=2), g.mean(axis=2), g.min(axis=2)], axis=1)
+
+
 def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int) -> np.ndarray:
     rows = [np.asarray(features[d], dtype=np.float64).ravel() for d in ids]
     observed = max((r.shape[0] for r in rows), default=0)
@@ -84,8 +99,11 @@ def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int
     for i, r in enumerate(rows):
         n = min(observed, r.shape[0])
         X[i, :n] = r[:n]
-    # 2x width: raw features concatenated with within-query ranks (the MSLR model).
-    if observed > 0 and width == 2 * observed:
+    # 2D+150: raw, percentiles, field max/mean/min, percentiles of those.
+    if observed >= _N_GROUPS * _N_FIELDS and width == 2 * observed + 2 * _N_AGGS:
+        aggs = group_aggregates(X)
+        X = np.hstack([X, within_query_ranks(X), aggs, within_query_ranks(aggs)])
+    elif observed > 0 and width == 2 * observed:
         X = np.hstack([X, within_query_ranks(X)])
     elif width != observed:
         if width > observed:

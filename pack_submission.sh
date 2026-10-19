@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Pack the assignment submission into ~/Desktop/2023CS50284.zip.
-# Includes source, trained artifacts, docs, and experiment logs.
-# Omits MSLR train/dev (do not submit data files), git metadata, and caches.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -26,6 +23,7 @@ rsync -a \
   --exclude 'a3-rankfusion-LTR.pdf' \
   --exclude 'a3-rankfusion-LTR.tex' \
   --exclude 'pack_submission.sh' \
+  --exclude 'submission/model_*.txt' \
   "${ROOT}/" "${DEST}/"
 
 rm -f "$OUT"
