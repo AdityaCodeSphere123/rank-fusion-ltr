@@ -6,3 +6,4 @@ runs/
 .pytest_cache/
 data/train/
 data/dev/
+data/ltr_data/

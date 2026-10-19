@@ -86,6 +86,12 @@ def main():
     ap.add_argument("--scale-views", action="store_true",
                     help="add rescaled, z-scored and log1p copies of the rows, each with its own "
                          "within-query percentiles, so splits are not tied to the raw scale")
+    ap.add_argument("--log-view", action="store_true",
+                    help="append a log1p copy of the rows")
+    ap.add_argument("--z-view", action="store_true",
+                    help="append a per-feature z-scored copy of the rows")
+    ap.add_argument("--query-scale", action="store_true",
+                    help="append a copy where every query is rescaled by its own per-feature log-normal draw")
     ap.add_argument("--single-field-copies", action="store_true",
                     help="append five copies of the rows, each keeping one MSLR field "
                          "(body, anchor, title, url, whole document) plus features 126-136")
@@ -93,7 +99,10 @@ def main():
                     help="how many uncorrupted copies to keep when stacking row copies")
     ap.add_argument("--group-aggs", action="store_true",
                     help="append per-group max/mean/min across the five MSLR fields, and their percentiles")
-    ap.add_argument("--use-dev", action="store_true", help="also train on dev (lowers Track C; declare it)")
+    ap.add_argument("--use-dev", action="store_true", help="also train on dev")
+    ap.add_argument("--extra", default=None, help="extra labelled LTR file concatenated into the fit")
+    ap.add_argument("--save-every", type=int, default=0, help="write a checkpoint every N trees next to --out")
+    ap.add_argument("--init-model", default=None, help="keep boosting from this LightGBM model file")
     args = ap.parse_args()
 
     X, y, q = load_xyq(_resolve(args.train, "train.txt"))
@@ -109,6 +118,12 @@ def main():
         X = np.vstack([X, dev[0]])
         y = np.concatenate([y, dev[1]])
         q = np.concatenate([q, dev[2]])
+    if args.extra:
+        Xe, ye, qe = load_xyq(args.extra)
+        X = np.vstack([X, Xe])
+        y = np.concatenate([y, ye])
+        q = np.concatenate([q, np.asarray(qe, dtype=object)])
+        del Xe
     n_queries_fit = len(set(q.tolist()))
     n_clean = len(y)
     scales = [float(s) for s in str(args.feature_noise).split(",") if float(s) > 0]
@@ -133,7 +148,27 @@ def main():
         builders.append(("scale", lambda raw, s=scale: (raw * s).astype(np.float32)))
         builders.append(("z", lambda raw: ((raw - raw.mean(0)) / np.clip(raw.std(0), 1e-6, None)).astype(np.float32)))
         builders.append(("log", lambda raw: (np.sign(raw) * np.log1p(np.abs(raw))).astype(np.float32)))
-    want_ranks = args.query_ranks or args.group_aggs or args.scale_views or args.single_field_copies
+    if args.log_view:
+        builders.append(("log", lambda raw: (np.sign(raw) * np.log1p(np.abs(raw))).astype(np.float32)))
+    if args.z_view:
+        builders.append(("z", lambda raw: ((raw - raw.mean(0)) / np.clip(raw.std(0), 1e-6, None)).astype(np.float32)))
+    if args.query_scale:
+        q_scale = q
+
+        def _qscale(raw, q=q_scale, seed=args.seed):
+            raw = np.asarray(raw, dtype=np.float32)
+            out = np.empty_like(raw)
+            rng = np.random.RandomState(seed + 17)
+            starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+            ends = np.r_[starts[1:], len(q)]
+            scales = np.exp(rng.normal(0.0, 1.0, size=(len(starts), raw.shape[1]))).astype(np.float32)
+            for i, (a, b) in enumerate(zip(starts, ends)):
+                out[a:b] = raw[a:b] * scales[i]
+            return out
+
+        builders.append(("qscale", _qscale))
+    want_ranks = (args.query_ranks or args.group_aggs or args.scale_views or args.single_field_copies
+                  or args.log_view or args.z_view or args.query_scale)
     if len(builders) > 1 or want_ranks:
         # Fill one preallocated block so the copies are not all live at once.
         probe_q = base_codes
@@ -162,11 +197,31 @@ def main():
                             max_bin=args.max_bin, extra_trees=args.extra_trees,
                             num_threads=args.num_threads)
     t0 = time.perf_counter()
-    model = fit(X, y, q, params, args.trees)
+    callbacks = None
+    if args.save_every > 0:
+        stem, ext = os.path.splitext(args.out)
+        Xd_exp = yd_exp = qd_exp = None
+        if dev is not None:
+            Xd0, yd_exp, qd_exp = dev
+            Xd_exp = _expand(Xd0, np.asarray(qd_exp), args.group_aggs) if want_ranks else np.asarray(Xd0, dtype=np.float32)
+
+        def _checkpoint(env, every=args.save_every, stem=stem, ext=ext, Xd_exp=Xd_exp, yd_exp=yd_exp, qd_exp=qd_exp):
+            n = env.iteration + 1
+            if n % every == 0:
+                env.model.save_model(f"{stem}_{n}{ext}")
+                msg = f"checkpoint {n} trees"
+                if Xd_exp is not None:
+                    msg += f" dev {ndcg10(env.model, Xd_exp, yd_exp, qd_exp):.4f}"
+                print(msg, flush=True)
+        callbacks = [_checkpoint]
+    model = fit(X, y, q, params, args.trees, callbacks=callbacks, init_model=args.init_model)
     fit_s = time.perf_counter() - t0
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     model.save_model(args.out)
-    print(f"trained on {n_queries_fit} queries ({'train+dev' if args.use_dev else 'train only'}) -> {args.out} "
+    where = "train+dev" if args.use_dev else "train only"
+    if args.extra:
+        where += "+extra"
+    print(f"trained on {n_queries_fit} queries ({where}) -> {args.out} "
           f"({args.trees} trees, features={X.shape[1]}, clean_copies={args.clean_copies}, "
           f"single_field_copies={args.single_field_copies}, group_aggs={args.group_aggs}, "
           f"scale_views={args.scale_views}, {fit_s:.0f}s)")

@@ -20,10 +20,16 @@ rsync -a \
   --exclude '.DS_Store' \
   --exclude 'data/train/' \
   --exclude 'data/dev/' \
+  --exclude 'data/ltr_data/' \
   --exclude 'a3-rankfusion-LTR.pdf' \
   --exclude 'a3-rankfusion-LTR.tex' \
   --exclude 'pack_submission.sh' \
   --exclude 'submission/model_*.txt' \
+  --exclude 'scripts/heldout_eval.py' \
+  --exclude 'scripts/recipe_rank_probe.py' \
+  --exclude 'Decision.md' \
+  --exclude 'scripts/istella_probe.py' \
+  --exclude 'experiments/' \
   "${ROOT}/" "${DEST}/"
 
 rm -f "$OUT"

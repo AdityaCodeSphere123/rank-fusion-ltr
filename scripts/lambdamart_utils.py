@@ -33,9 +33,12 @@ def default_params(num_leaves=31, learning_rate=0.05, min_data_in_leaf=50, lambd
     return p
 
 
-def fit(X, y, qids, params, num_trees):
+def fit(X, y, qids, params, num_trees, callbacks=None, init_model=None):
     import lightgbm as lgb
-    return lgb.train(params, lgb.Dataset(X, label=y, group=group_sizes(qids)), num_boost_round=num_trees)
+    return lgb.train(
+        params, lgb.Dataset(X, label=y, group=group_sizes(qids)),
+        num_boost_round=num_trees, callbacks=callbacks, init_model=init_model,
+    )
 
 
 def ndcg10(model, X, y, qids):

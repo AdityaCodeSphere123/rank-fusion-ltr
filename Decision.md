@@ -255,7 +255,7 @@ pads or truncates a row to the model's feature count, and rebuilds the D7 column
 | LambdaMART D5 (replaced by D7) | TRAIN 5-fold CV | 0.4771 ± 0.0068 (CV val) | 0.4845 | 0.1526 |
 
 On this table, LambdaMART is above the pairwise MLP, then the pointwise MLP, fusion, and single BM25. Those DEV
-numbers are about 0.007 above the TRAIN-CV estimates for each family. The current LambdaMART file is the D8 fit,
+numbers are about 0.007 above the TRAIN-CV estimates for each family. The current LambdaMART file is the D10 fit,
 not this row.
 
 Recipe (C1) on the synthetic transfer sets (`python scripts/run_recipe.py`). The vali file is also used for the
@@ -281,10 +281,10 @@ budget), so at this size the early-stopped train-only model is written. 130 s is
 | artifact / function | configuration |
 |---|---|
 | `fuse_candidates` | `combsum_scores(base, channels=("bm25_whole_document", "bm25_title", "lmir_dir_whole_document"))`: min-max per channel over the pool, equal weights, LMIR.JM unused; ties keep candidate order |
-| `submission/model.txt` | D8 fit. LightGBM `lambdarank`, `num_leaves=63, learning_rate=0.05, min_data_in_leaf=50, feature_fraction=0.8, lambda_l2=1, bagging_fraction=0.8, bagging_freq=1, max_bin=255`, 600 trees, `num_threads=8, deterministic=True, force_row_wise=True, seed=1`. TRAIN and DEV (8,000 queries), four row copies (raw, per-feature log-normal scale, z-score, log1p), each with within-query percentiles (272 columns). Command in `docs/SUBMISSION_NOTES.md`. Fit 160 s. TRAIN-only nDCG@10 0.5724. DEV nDCG@10 0.5786 (those queries were in the fit) |
+| `submission/model.txt` | D10 fit. LightGBM `lambdarank`, `num_leaves=127, learning_rate=0.05, min_data_in_leaf=20, feature_fraction=0.5, lambda_l2=0.1, bagging_fraction=0.9, bagging_freq=1, max_bin=255`, 1000 trees, seed 1. TRAIN and DEV, five row copies (raw, 0.05×std noise, log1p, z-score, per-query log-normal scale), each with within-query percentiles (272 columns). Command in `docs/SUBMISSION_NOTES.md`. DEV nDCG@10 0.6447 (in-training). At 600 trees DEV was 0.5994; at 800 trees 0.6239 |
 | `submission/pairwise_model.pt` | `ScoringNetwork(136, [256, 256, 256])`; `train_model("pairwise", pair_weighting="delta_ndcg", queries_per_batch=64, pairs_per_query=2000, lr=1e-3, lr_decay=0.9, epochs≤40, patience=5, seed=0)` (Adam, no weight decay); 21 epochs run, best epoch 16 restored; trained on 9/10 of TRAIN (5,400 queries), early-stopped on TRAIN fold 0 of `grouped_kfold(k=10, seed=0)` (600 queries; monitor nDCG@10 0.4417); 357 s; DEV 0.4364 (report) |
 | `submission/pointwise_model.pt` | `ScoringNetwork(136, 64)`; `train_model("pointwise", lr=1e-3, batch_size=1024, epochs≤30, patience=3, seed=0)`; 12 epochs run, best epoch 9; same TRAIN 9/10 + TRAIN-fold-0 early stopping; 62 s; DEV 0.4225 (report) |
-| `recipe.train` | parse both files (width = max index in either); rules on the data shape: `num_leaves = clip(2^round(log2(√n_rows/16)) − 1, 7, 63)`, `min_data_in_leaf = clip(n_rows/4000, 20, 200)`, `feature_fraction = clip(1 − 0.15·log2(D/32), 0.5, 1)`, `lambda_l2 = 10 if n_rows < 50k else 1`, lr 0.05 (0.1 if the cost model allows < 800 rounds), bagging 0.8; max rounds from a size-based cost model (≤ 3000); early stopping on the vali file's nDCG@10 with patience `clip(max_rounds/10, 50, 200)`; refit on train + vali with `round(best·(n_train+n_vali)/n_train)` rounds when the predicted fit + refit cost ≤ 12 min (predicted at 3× the measured cost); wall-clock guard at 15 min as a safety net; `num_threads=4`, deterministic, all seeds = `seed` |
+| `recipe.train` | parse both files (width = max index in either); values above 1e30 become missing; rules on the data shape: `num_leaves = clip(2^round(log2(√n_rows/16)) − 1, 7, 63)`, `min_data_in_leaf = clip(n_rows/4000, 20, 200)`, `feature_fraction = clip(1 − 0.15·log2(D/32), 0.5, 1)`, `lambda_l2 = 10 if n_rows < 50k else 1`, lr 0.05 (0.1 if the cost model allows < 800 rounds), bagging 0.8; max rounds from a size-based cost model (≤ 3000); early stopping on the vali file's nDCG@10 with patience `clip(max_rounds/10, 50, 200)`; refit on train + vali with `round(best·(n_train+n_vali)/n_train)` rounds when the predicted fit + refit cost ≤ 12 min (predicted at 3× the measured cost); wall-clock guard at 15 min as a safety net; `num_threads=4`, deterministic, all seeds = `seed` |
 
 Reproduce: the D5 `scripts/train_model.py` command for `model.txt`;
 `python scripts/train_neural.py --kind pairwise --train data/train --dev data/dev --monitor train-slice --epochs 40
@@ -317,7 +317,7 @@ Spot checks: fusion worked examples match the docstrings (tests); `ranknet_loss(
 `[-1000]` vs `[1000]` → 2000 (tests); one `pairwise_step` raises the margin (test); two `train_model` runs with the
 same seed give identical weights (test, and both training paths checked by hand); `rerank_with_ltr` scores the
 40/90/250-feature recipe models (`run_recipe.py`) and returns the same ranking on repeated calls. Current
-`model.txt` is the D8 fit (600 trees, 63 leaves, 272 columns, TRAIN and DEV), not the toy model and not the D5 or D7 files.
+`model.txt` is the D10 fit (1000 trees, 127 leaves, 272 columns, TRAIN and DEV), not the toy model and not the D5–D9 files.
 
 ## 5. Risks
 
@@ -334,8 +334,7 @@ same seed give identical weights (test, and both training paths checked by hand)
 * The pairwise artifact is an affine standardizer plus a plain MLP. It is +0.011 DEV over textbook RankNet.
   Neural comparisons use 600-query folds (standard error about 0.01).
 * LightGBM with a fixed `num_threads` is deterministic. Torch CPU training matched bit-for-bit on this machine.
-* The D5 file was trained on TRAIN only. The current file includes DEV (D7). No external data was used. `test.txt`
-  was never present.
+* The D5 file was trained on TRAIN only. The current file includes DEV (D9). No external data was used. `test.txt` was never present.
 
 ### D6. Feature-noise augmentation (Track C2)
 
@@ -354,3 +353,15 @@ That representation was fit on TRAIN and DEV (8,000 queries), 63 leaves, 300 tre
 Leaderboard: the percentile model scored Track B 0.4928 and C2 0.3682. Adding a rescaled, z-scored, and log1p copy of each row scored Track B 0.4963 and C2 0.3680, and that upload is the one marked best. D7 then raised Track B to 0.5381 and C2 fell to 0.3528.
 
 D8 keeps the percentile columns and those three extra copies, and fits TRAIN and DEV for 600 trees (63 leaves, learning rate 0.05, `min_data_in_leaf` 50, `feature_fraction` 0.8, seed 1). Fit 160 s. TRAIN-only nDCG@10 0.5724. DEV nDCG@10 0.5786, in-training. Same DEV rows: log1p 0.5770, per-feature log-normal scale 0.5345, ×10 0.4783. At 300 trees DEV is 0.5301, below the D7 file; 600 trees is the count that passes it. Neural models, fusion weights, and `recipe.py` were not refit.
+
+### D9. Noise copies (current `submission/model.txt`)
+
+The model in `submission/model.txt` before this fit (1,600 trees, raw features plus percentiles, no noise copies) scored 0.4663 clean and 0.2850 under additive noise of 0.05× feature standard deviation (mean of five draws). That noise scale is the one that previously lined up with graded C2 (clean 0.4845, graded 0.3533, DEV-under-noise 0.3450).
+
+The shipped file keeps the percentile columns and adds one copy at 0.05× std and one at 0.10× std. Hyperparameters: 63 leaves, lr 0.0125, `min_data_in_leaf` 500, `feature_fraction` 0.5, seed 0, TRAIN and DEV. At 800 trees the add-0.05 score was 0.4746, at 1200 trees 0.4852, and at 1600 trees 0.4929 (mean of five draws). Clean score at 1600 trees is 0.5242. DEV nDCG@10 is 0.5331, in-training. Fit 640 s. On the leaderboard this file scored Track B 0.5331 and C2 0.3579. Replaced by D10.
+
+### D10. Capacity and scale copies (current `submission/model.txt`)
+
+D9 held up under additive noise and lost the monotone changes (log1p, z-score, ×10). D10 keeps the percentile columns and fits five copies of each TRAIN and DEV query: raw, additive noise at 0.05× feature standard deviation, log1p, a per-feature z-score, and a per-query log-normal rescaling. Hyperparameters: 127 leaves, lr 0.05, `min_data_in_leaf` 20, `feature_fraction` 0.5, `lambda_l2` 0.1, bagging 0.9, seed 1, 1000 trees. DEV nDCG@10 is 0.6447, in-training. At 600 trees DEV was 0.5994 and at 800 trees 0.6239.
+
+`recipe.py` maps values above 1e30 to missing, so a sentinel cannot overflow float32. Within-query percentiles were compared on the recipe and left out: they did not raise nDCG@10 on the checked tasks.

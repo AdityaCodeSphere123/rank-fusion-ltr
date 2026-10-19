@@ -60,13 +60,35 @@ def fuse_candidates(qid: str, candidate_doc_ids: List[str], base_scores: Dict[st
     return [(d, fused[d]) for d in ranked[:k]]
 
 
+def sanitize(X: np.ndarray) -> np.ndarray:
+    """Replace non-finite values and values above 1e30 with NaN.
+
+    LightGBM treats NaN as missing. Finite values are left unchanged.
+    """
+    X = np.asarray(X, dtype=np.float64)
+    bad = ~np.isfinite(X) | (np.abs(X) > 1e30)
+    if not bad.any():
+        return X
+    X = X.copy()
+    X[bad] = np.nan
+    return X
+
+
 def within_query_ranks(X: np.ndarray) -> np.ndarray:
     """Within-query average-tie percentile of each feature, in [0, 1].
 
     One document, and any feature that is constant in the query, is 0. Tied
     values share a percentile, so document order does not matter. A monotone
-    map of one feature leaves its percentile unchanged.
+    map of one feature leaves its percentile unchanged. Non-finite entries
+    tie at the bottom of that feature.
     """
+    X = np.asarray(X, dtype=np.float64)
+    bad = ~np.isfinite(X)
+    if bad.any():
+        X = X.copy()
+        finite = X[~bad]
+        floor = (float(finite.min()) - 1.0) if finite.size else 0.0
+        X[bad] = floor
     n, d = X.shape
     out = np.zeros((n, d), dtype=np.float64)
     if n <= 1:
@@ -99,6 +121,7 @@ def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int
     for i, r in enumerate(rows):
         n = min(observed, r.shape[0])
         X[i, :n] = r[:n]
+    X = sanitize(X)
     # 2D+150: raw, percentiles, field max/mean/min, percentiles of those.
     if observed >= _N_GROUPS * _N_FIELDS and width == 2 * observed + 2 * _N_AGGS:
         aggs = group_aggregates(X)

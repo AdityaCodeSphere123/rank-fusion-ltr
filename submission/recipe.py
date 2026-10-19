@@ -1,9 +1,9 @@
 """Track C1 recipe. Staff call train(train_path, vali_path, out_model_path, seed=0).
 
 Writes a LightGBM LambdaMART model. Leaf size, column sampling, L2 and the
-round budget follow the training-set shape, not MSLR constants. Vali is used
-only to early-stop nDCG@10; the model is then refit on train+vali when the
-size-based cost estimate fits the time budget.
+round budget follow the training-set shape, not MSLR constants. Values above
+1e30 are stored as missing. Vali is used only to early-stop nDCG@10; the model is then refit
+on train+vali when the size-based cost estimate fits the time budget.
 """
 import time
 
@@ -39,7 +39,9 @@ def _read(path: str, block_rows: int = 8192):
             qids.append(parts[1][4:])
             if len(parts) > 2 and parts[2].strip():
                 flat = np.array(parts[2].replace(":", " ").split(), dtype=np.float64)
-                pending.append((flat[0::2].astype(np.int64), flat[1::2]))
+                val = flat[1::2]
+                val[~np.isfinite(val) | (np.abs(val) > 1e30)] = np.nan
+                pending.append((flat[0::2].astype(np.int64), val))
             else:
                 pending.append((np.zeros(0, np.int64), np.zeros(0)))
             if len(pending) == block_rows:
