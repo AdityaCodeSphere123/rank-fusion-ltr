@@ -20,7 +20,7 @@ import numpy as np
 
 from scripts.data_cache import load_xyq
 from scripts.lambdamart_utils import default_params, fit, ndcg10
-from submission.ranking import group_aggregates, within_query_ranks
+from submission.ranking import group_aggregates, within_query_ranks, within_query_z
 
 
 def _resolve(path, name):
@@ -36,10 +36,22 @@ def _query_ranks(X, q):
     return ranks.astype(np.float32)
 
 
-def _expand(X, q, with_aggs):
-    """Raw features plus within-query percentiles, and, when with_aggs, the
-    25-group max/mean/min and their percentiles. Same layout as rerank_with_ltr."""
+def _query_z(X, q):
+    out = np.empty(np.shape(X), dtype=np.float32)
+    starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+    ends = np.r_[starts[1:], len(q)]
+    for a, b in zip(starts, ends):
+        out[a:b] = within_query_z(np.asarray(X[a:b], dtype=np.float64))
+    return out
+
+
+def _expand(X, q, with_aggs, with_z=False):
+    """Raw features plus within-query percentiles. with_z appends within-query
+    z-scores (width 3D). with_aggs appends the 25-group max/mean/min and their
+    percentiles (width 2D+150). Same layouts as rerank_with_ltr."""
     parts = [np.asarray(X, dtype=np.float32), _query_ranks(X, q)]
+    if with_z:
+        parts.append(_query_z(X, q))
     if with_aggs:
         aggs = group_aggregates(X).astype(np.float32)
         parts.extend([aggs, _query_ranks(aggs, q)])
@@ -83,6 +95,8 @@ def main():
     ap.add_argument("--query-ranks", action="store_true",
                     help="append within-query feature ranks, the same transform rerank_with_ltr applies "
                          "when the model has twice as many features as the input")
+    ap.add_argument("--query-z", action="store_true",
+                    help="also append within-query z-scores (model width 3D). Implies --query-ranks")
     ap.add_argument("--scale-views", action="store_true",
                     help="add rescaled, z-scored and log1p copies of the rows, each with its own "
                          "within-query percentiles, so splits are not tied to the raw scale")
@@ -167,12 +181,14 @@ def main():
             return out
 
         builders.append(("qscale", _qscale))
+    if args.query_z:
+        args.query_ranks = True
     want_ranks = (args.query_ranks or args.group_aggs or args.scale_views or args.single_field_copies
                   or args.log_view or args.z_view or args.query_scale)
     if len(builders) > 1 or want_ranks:
         # Fill one preallocated block so the copies are not all live at once.
         probe_q = base_codes
-        probe = _expand(X[:1], probe_q[:1], args.group_aggs) if want_ranks else np.asarray(X[:1], dtype=np.float32)
+        probe = _expand(X[:1], probe_q[:1], args.group_aggs, with_z=args.query_z) if want_ranks else np.asarray(X[:1], dtype=np.float32)
         width = probe.shape[1]
         del probe
         gib = n_clean * len(builders) * width * 4 / 1024**3
@@ -183,7 +199,7 @@ def main():
         for i, (_, build) in enumerate(builders):
             view = np.asarray(build(X), dtype=np.float32)
             vq = base_codes + i * n_queries
-            block = _expand(view, vq, args.group_aggs) if want_ranks else view
+            block = _expand(view, vq, args.group_aggs, with_z=args.query_z) if want_ranks else view
             a = i * n_clean
             big[a:a + n_clean] = block
             big_y[a:a + n_clean] = y
@@ -203,7 +219,7 @@ def main():
         Xd_exp = yd_exp = qd_exp = None
         if dev is not None:
             Xd0, yd_exp, qd_exp = dev
-            Xd_exp = _expand(Xd0, np.asarray(qd_exp), args.group_aggs) if want_ranks else np.asarray(Xd0, dtype=np.float32)
+            Xd_exp = _expand(Xd0, np.asarray(qd_exp), args.group_aggs, with_z=args.query_z) if want_ranks else np.asarray(Xd0, dtype=np.float32)
 
         def _checkpoint(env, every=args.save_every, stem=stem, ext=ext, Xd_exp=Xd_exp, yd_exp=yd_exp, qd_exp=qd_exp):
             n = env.iteration + 1
@@ -230,7 +246,7 @@ def main():
     if dev is not None:
         Xd, yd, qd = dev
         if want_ranks:
-            Xd = _expand(Xd, np.asarray(qd), args.group_aggs)
+            Xd = _expand(Xd, np.asarray(qd), args.group_aggs, with_z=args.query_z)
         label = "dev nDCG@10 (in-training, dev rows were fit)" if args.use_dev else "dev   nDCG@10"
         print(f"{label} = {ndcg10(model, Xd, yd, qd):.4f}")
 

@@ -4,11 +4,12 @@ fuse_candidates: unweighted CombSUM of BM25 (document and title) and LMIR.DIR.
 LMIR.JM is dropped; on TRAIN every channel-weight grid set it to 0.
 
 rerank_with_ltr: the LightGBM model loaded by prepare(). Rows are padded or
-truncated to the model's width. Two MSLR layouts are recognised. Twice the
-candidate width is raw features plus within-query percentiles. Width
-2*D + 150 (D >= 125) also appends, for each of the 25 field-groups, the max,
-mean and min across the five fields, and the percentiles of those aggregates.
-Every other width, including recipe.py models, is scored on the raw vectors.
+truncated to the model's width. Three MSLR layouts are recognised. Twice the
+candidate width is raw features plus within-query percentiles. Width 3D
+also appends a within-query z-score of each raw feature. Width 2D+150
+(D >= 125) also appends, for each of the 25 field-groups, the max, mean and
+min across the five fields, and the percentiles of those aggregates. Every
+other width, including recipe.py models, is scored on the raw vectors.
 
 prepare() only loads the artifact and raises if it is missing. Both rankers
 return at most k (doc_id, score) pairs, best first, ids drawn only from the
@@ -108,6 +109,23 @@ def within_query_ranks(X: np.ndarray) -> np.ndarray:
     return out
 
 
+def within_query_z(X: np.ndarray) -> np.ndarray:
+    """Within-query z-score of each feature.
+
+    Invariant to a positive scale and shift applied to one feature, including
+    a different scale on every query. A constant feature, and a one-document
+    query, is 0. Non-finite inputs do not set the mean or the scale.
+    """
+    X = np.asarray(X, dtype=np.float64)
+    mu = np.nanmean(X, axis=0)
+    sd = np.nanstd(X, axis=0)
+    mu = np.where(np.isfinite(mu), mu, 0.0)
+    sd = np.where(np.isfinite(sd) & (sd >= 1e-8), sd, 1.0)
+    out = (X - mu) / sd
+    out[~np.isfinite(out)] = 0.0
+    return out
+
+
 def group_aggregates(X: np.ndarray) -> np.ndarray:
     """Max, mean and min across the five fields of each of the 25 MSLR groups."""
     g = np.asarray(X[:, :_N_GROUPS * _N_FIELDS], dtype=np.float64).reshape(X.shape[0], _N_GROUPS, _N_FIELDS)
@@ -126,6 +144,8 @@ def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int
     if observed >= _N_GROUPS * _N_FIELDS and width == 2 * observed + 2 * _N_AGGS:
         aggs = group_aggregates(X)
         X = np.hstack([X, within_query_ranks(X), aggs, within_query_ranks(aggs)])
+    elif observed > 0 and width == 3 * observed:
+        X = np.hstack([X, within_query_ranks(X), within_query_z(X)])
     elif observed > 0 and width == 2 * observed:
         X = np.hstack([X, within_query_ranks(X)])
     elif width != observed:

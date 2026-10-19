@@ -255,7 +255,7 @@ pads or truncates a row to the model's feature count, and rebuilds the D7 column
 | LambdaMART D5 (replaced by D7) | TRAIN 5-fold CV | 0.4771 ± 0.0068 (CV val) | 0.4845 | 0.1526 |
 
 On this table, LambdaMART is above the pairwise MLP, then the pointwise MLP, fusion, and single BM25. Those DEV
-numbers are about 0.007 above the TRAIN-CV estimates for each family. The current LambdaMART file is the D10 fit,
+numbers are about 0.007 above the TRAIN-CV estimates for each family. The current LambdaMART file is the D13 fit,
 not this row.
 
 Recipe (C1) on the synthetic transfer sets (`python scripts/run_recipe.py`). The vali file is also used for the
@@ -281,7 +281,7 @@ budget), so at this size the early-stopped train-only model is written. 130 s is
 | artifact / function | configuration |
 |---|---|
 | `fuse_candidates` | `combsum_scores(base, channels=("bm25_whole_document", "bm25_title", "lmir_dir_whole_document"))`: min-max per channel over the pool, equal weights, LMIR.JM unused; ties keep candidate order |
-| `submission/model.txt` | D10 fit. LightGBM `lambdarank`, `num_leaves=127, learning_rate=0.05, min_data_in_leaf=20, feature_fraction=0.5, lambda_l2=0.1, bagging_fraction=0.9, bagging_freq=1, max_bin=255`, 1000 trees, seed 1. TRAIN and DEV, five row copies (raw, 0.05×std noise, log1p, z-score, per-query log-normal scale), each with within-query percentiles (272 columns). Command in `docs/SUBMISSION_NOTES.md`. DEV nDCG@10 0.6447 (in-training). At 600 trees DEV was 0.5994; at 800 trees 0.6239 |
+| `submission/model.txt` | D13 fit. LightGBM `lambdarank`, `num_leaves=127, learning_rate=0.05, min_data_in_leaf=20, feature_fraction=0.5, lambda_l2=0.1, bagging_fraction=0.9, bagging_freq=1`, 600 trees, seed 1. TRAIN and DEV. 408 columns: raw features, within-query percentiles, within-query z-scores, with five training views (raw, 0.05×-std noise, log1p, z-score, per-query scale). DEV nDCG@10 0.6639 (in-training). Tree count from a TRAIN fifth: corruption mean 0.4581 at 400 trees and 0.4560 at 600, while in-training DEV went from 0.6383 to 0.6849 |
 | `submission/pairwise_model.pt` | `ScoringNetwork(136, [256, 256, 256])`; `train_model("pairwise", pair_weighting="delta_ndcg", queries_per_batch=64, pairs_per_query=2000, lr=1e-3, lr_decay=0.9, epochs≤40, patience=5, seed=0)` (Adam, no weight decay); 21 epochs run, best epoch 16 restored; trained on 9/10 of TRAIN (5,400 queries), early-stopped on TRAIN fold 0 of `grouped_kfold(k=10, seed=0)` (600 queries; monitor nDCG@10 0.4417); 357 s; DEV 0.4364 (report) |
 | `submission/pointwise_model.pt` | `ScoringNetwork(136, 64)`; `train_model("pointwise", lr=1e-3, batch_size=1024, epochs≤30, patience=3, seed=0)`; 12 epochs run, best epoch 9; same TRAIN 9/10 + TRAIN-fold-0 early stopping; 62 s; DEV 0.4225 (report) |
 | `recipe.train` | parse both files (width = max index in either); values above 1e30 become missing; rules on the data shape: `num_leaves = clip(2^round(log2(√n_rows/16)) − 1, 7, 63)`, `min_data_in_leaf = clip(n_rows/4000, 20, 200)`, `feature_fraction = clip(1 − 0.15·log2(D/32), 0.5, 1)`, `lambda_l2 = 10 if n_rows < 50k else 1`, lr 0.05 (0.1 if the cost model allows < 800 rounds), bagging 0.8; max rounds from a size-based cost model (≤ 3000); early stopping on the vali file's nDCG@10 with patience `clip(max_rounds/10, 50, 200)`; refit on train + vali with `round(best·(n_train+n_vali)/n_train)` rounds when the predicted fit + refit cost ≤ 12 min (predicted at 3× the measured cost); wall-clock guard at 15 min as a safety net; `num_threads=4`, deterministic, all seeds = `seed` |
@@ -317,7 +317,7 @@ Spot checks: fusion worked examples match the docstrings (tests); `ranknet_loss(
 `[-1000]` vs `[1000]` → 2000 (tests); one `pairwise_step` raises the margin (test); two `train_model` runs with the
 same seed give identical weights (test, and both training paths checked by hand); `rerank_with_ltr` scores the
 40/90/250-feature recipe models (`run_recipe.py`) and returns the same ranking on repeated calls. Current
-`model.txt` is the D10 fit (1000 trees, 127 leaves, 272 columns, TRAIN and DEV), not the toy model and not the D5–D9 files.
+`model.txt` is the D13 fit (600 trees, 127 leaves, 408 columns, TRAIN and DEV), not the toy model and not the D5–D12 files. The D12 file is `submission/model_d12.txt`.
 
 ## 5. Risks
 
@@ -365,3 +365,46 @@ The shipped file keeps the percentile columns and adds one copy at 0.05× std an
 D9 held up under additive noise and lost the monotone changes (log1p, z-score, ×10). D10 keeps the percentile columns and fits five copies of each TRAIN and DEV query: raw, additive noise at 0.05× feature standard deviation, log1p, a per-feature z-score, and a per-query log-normal rescaling. Hyperparameters: 127 leaves, lr 0.05, `min_data_in_leaf` 20, `feature_fraction` 0.5, `lambda_l2` 0.1, bagging 0.9, seed 1, 1000 trees. DEV nDCG@10 is 0.6447, in-training. At 600 trees DEV was 0.5994 and at 800 trees 0.6239.
 
 `recipe.py` maps values above 1e30 to missing, so a sentinel cannot overflow float32. Within-query percentiles were compared on the recipe and left out: they did not raise nDCG@10 on the checked tasks.
+
+### D11. Within-query z-scores (current `submission/model.txt`)
+
+D10's dev nDCG of 0.6447 is in-training. Graded C2 stayed at 0.3603. A blend of that model's score with BM25/LMIR percentiles lowered every corruption on a DEV slice, so the blend was not shipped.
+
+`scripts/probe_robust.py` refit small models on 1,500 TRAIN queries and scored 400 disjoint TRAIN queries. DEV was not read. Raw plus percentiles: clean 0.4727, mean of eight corruptions 0.3620. The same trees with a within-query z-score of each feature added: clean 0.4836, mean 0.4187. That was ahead of training-time log/z/scale copies (mean 0.3988), noise copies (0.3850), cell-dropout copies (0.3778), field aggregates (0.3681) and percentile-only features (0.3384).
+
+Tree count on TRAIN fold 0, with the other TRAIN folds and DEV in the fit (`scripts/fit_qz.py`): 200 trees mean 0.4235 (clean 0.4940), 400 trees 0.4146, 600 trees 0.4073, 800 trees 0.4031. Shipped refit: 63 leaves, lr 0.05, `min_data_in_leaf` 80, `feature_fraction` 0.6, 200 trees, TRAIN and DEV, 408 columns. Fit about 100 s. DEV nDCG@10 0.5514, in-training. The D10 file is `submission/model_d10.txt`.
+
+Track P was re-screened on TRAIN fold 1. The shipped LambdaRank run scored holdout 0.4165. Gain-biased pairs 0.4126, a robust scaler 0.3941, smooth nDCG 0.4010, and training on DEV as well 0.4058. `pairwise_model.pt` was not replaced.
+
+### D12. Leaf count on the five training views (current `submission/model.txt`)
+
+A one-at-a-time sweep changed one setting at a time from the D10 hyperparameters (127 leaves, lr 0.05, `min_data_in_leaf` 20, `feature_fraction` 0.5, `lambda_l2` 0.1, bagging 0.9, noise 0.05, log / z / per-query-scale views). Each run used 300 trees on 3,600 queries (431,777 rows) and was ranked by mean nDCG@10 on seven corruptions.
+
+| change | clean | corrupt |
+|---|---|---|
+| **num_leaves=255** | **0.5548** | **0.4719** |
+| feature_noise=0.05,0.10 | 0.5191 | 0.4612 |
+| learning_rate=0.10 | 0.5489 | 0.4610 |
+| baseline (127 leaves) | 0.5222 | 0.4558 |
+| raw only, no views | 0.5653 | 0.3465 |
+
+255 leaves won both the corruption mean (+0.0161) and the clean score among the runs that kept the views. The noise and learning-rate gains were smaller and were not combined with 255 leaves. Tree count stayed at the sweep's 300.
+
+Shipped refit: those hyperparameters, TRAIN and DEV (8,000 queries), five views, 272 columns (raw plus within-query percentiles). Fit 404 s. Clean-copy train nDCG@10 0.6065. DEV nDCG@10 0.6089, in-training. The D11 file is `submission/model_d11.txt`.
+
+### D13. Within-query z-scores plus the five views (current `submission/model.txt`)
+
+The D10 file (views, no within-query z, 1000 trees) scored DEV 0.6447 and graded C2 0.3603. The D11 file (within-query z, no views, 200 trees) scored DEV 0.5514 and graded C2 0.3629. This fit uses both: 408 columns and the same five row copies as D10, 127 leaves.
+
+Tree count on a fifth of TRAIN, with the other four fifths plus DEV in the fit (`scripts/select_qz_views.py`):
+
+| trees | DEV (in fit) | holdout clean | corruption mean |
+|---|---|---|---|
+| 200 | 0.5703 | 0.4836 | 0.4579 |
+| 400 | 0.6383 | 0.4848 | 0.4581 |
+| 600 | 0.6849 | 0.4830 | 0.4560 |
+| 800 | 0.7168 | 0.4817 | 0.4548 |
+
+600 trees is the shipped count. The corruption mean is 0.002 below its peak and the in-training DEV score is well above D10. Full refit on TRAIN and DEV: 605 s, clean-copy train nDCG@10 0.6603, DEV nDCG@10 0.6639, in-training. The D12 file is `submission/model_d12.txt`.
+
+Track P hard pair sampling scored TRAIN-holdout 0.4141 against 0.4165 for the shipped LambdaRank run. `pairwise_model.pt` was not replaced.
