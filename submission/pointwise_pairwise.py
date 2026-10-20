@@ -139,6 +139,18 @@ def _sample_query_pairs(labels: np.ndarray, scores: Optional[np.ndarray], pairs_
         if mode == "hard" and scores is not None:
             margin = np.clip(scores[lo] - scores[hi], -20.0, 20.0)
             gain = gain * (1.0 / (1.0 + np.exp(-margin)))
+        if mode == "lambda" and scores is not None:
+            order = np.argsort(-scores, kind="mergesort")
+            ranks = np.empty(n, dtype=np.float64)
+            ranks[order] = np.arange(1, n + 1)
+            disc = 1.0 / np.log2(1.0 + ranks)
+            ideal = np.sort(np.power(2.0, labels.astype(np.float64)) - 1.0)[::-1][:10]
+            idcg = float(np.sum(ideal / np.log2(np.arange(2, ideal.size + 2))))
+            if idcg > 0:
+                gain = gain * np.abs(disc[hi] - disc[lo]) / idcg
+            if int((gain > 0).sum()) >= pairs_per_query:
+                pick = np.argpartition(-gain, pairs_per_query - 1)[:pairs_per_query]
+                return np.stack([hi[pick], lo[pick]], axis=1).astype(np.int64)
         gain = np.nan_to_num(gain, nan=0.0, posinf=0.0, neginf=0.0)
         total = float(gain.sum())
         if total <= 0 or int((gain > 0).sum()) < pairs_per_query:
@@ -167,7 +179,8 @@ def approx_ndcg_loss(scores: torch.Tensor, labels: torch.Tensor, alpha: float = 
 
 def lambdarank_query_step(network: nn.Module, optimizer, Xt: torch.Tensor, yt: torch.Tensor,
                           query_rows: List[np.ndarray], pairs_per_query: int, rng: np.random.RandomState,
-                          trunc: Optional[int] = None, pair_sampling: str = "uniform") -> float:
+                          trunc: Optional[int] = None, pair_sampling: str = "uniform",
+                          gain_weight: float = 0.0) -> float:
     """One step on whole queries: pairs from make_pairs, weights from the current scores."""
     sizes = [len(r) for r in query_rows]
     flat = torch.from_numpy(np.concatenate(query_rows))
@@ -207,7 +220,53 @@ def lambdarank_query_step(network: nn.Module, optimizer, Xt: torch.Tensor, yt: t
     if float(weights.sum()) <= 0:
         return 0.0
     loss = weighted_ranknet_loss(scores[pairs_t[:, 0]], scores[pairs_t[:, 1]], weights)
+    if gain_weight > 0:
+        gain = torch.pow(2.0, labels) - 1.0
+        loss = loss + gain_weight * pointwise_loss(scores, gain)
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(network.parameters(), 5.0)
+    optimizer.step()
+    return float(loss.item())
+
+
+def listnet_loss(scores: torch.Tensor, labels: torch.Tensor, temp: float = 1.0,
+                 on: str = "gain") -> torch.Tensor:
+    """Cross-entropy between a softened label distribution and a softmax over scores.
+
+    on="gain" uses 2^label-1. on="label" uses the grade itself, which is less peaked.
+    temp above 1 spreads the target so one highly relevant document does not take all the mass.
+    """
+    if on == "label":
+        logits = labels.to(scores.dtype)
+    else:
+        logits = torch.pow(2.0, labels.to(scores.dtype)) - 1.0
+    if float(logits.sum()) <= 0:
+        return scores.sum() * 0.0
+    target = torch.softmax(logits / temp, dim=0)
+    return -(target * torch.log_softmax(scores, dim=0)).sum()
+
+
+def listnet_query_step(network: nn.Module, optimizer, Xt: torch.Tensor, yt: torch.Tensor,
+                       query_rows: List[np.ndarray], temp: float = 1.0, on: str = "gain") -> float:
+    flat = torch.from_numpy(np.concatenate(query_rows))
+    labels = yt[flat]
+    optimizer.zero_grad()
+    scores = network(Xt[flat])
+    loss = scores.new_zeros(())
+    offset = 0
+    used = 0
+    for rows in query_rows:
+        n = len(rows)
+        chunk = labels[offset:offset + n]
+        if n > 1 and float(chunk.max()) > 0:
+            loss = loss + listnet_loss(scores[offset:offset + n], chunk, temp=temp, on=on)
+            used += 1
+        offset += n
+    if used == 0:
+        return 0.0
+    loss = loss / used
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(network.parameters(), 5.0)
     optimizer.step()
     return float(loss.item())
 
@@ -247,8 +306,24 @@ def _standardizer_for(X: np.ndarray, scale: str) -> Standardizer:
     """'robust' uses median and IQR so a few huge features do not set the column scale."""
     if scale == "standard":
         return Standardizer().fit(X)
+    if scale.startswith("winsor"):
+        tail = scale[len("winsor"):]
+        pct = 1.0 if tail == "" else float(tail)
+        if not 0.0 < pct < 50.0:
+            raise ValueError("winsor percentile must be between 0 and 50")
+        lo = np.percentile(X, pct, axis=0)
+        hi = np.percentile(X, 100.0 - pct, axis=0)
+        return Standardizer().fit(np.clip(X, lo, hi))
+    if scale == "medwinsor":
+        lo = np.percentile(X, 1, axis=0)
+        hi = np.percentile(X, 99, axis=0)
+        clipped = np.clip(X, lo, hi)
+        med = np.median(clipped, axis=0)
+        std = clipped.std(axis=0)
+        std = np.where(std < 1e-8, 1.0, std)
+        return Standardizer(med.astype(np.float64), std.astype(np.float64))
     if scale != "robust":
-        raise ValueError("scale must be 'standard' or 'robust'")
+        raise ValueError("scale must be 'standard', 'robust', or 'winsor'")
     med = np.median(X, axis=0)
     iqr = np.percentile(X, 75, axis=0) - np.percentile(X, 25, axis=0)
     iqr = np.where(iqr < 1e-8, 1.0, iqr)
@@ -260,7 +335,8 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
                 verbose: bool = False, pair_weighting: str = "none", queries_per_batch: int = 16,
                 ndcg_trunc: Optional[int] = None, weight_decay: float = 0.0,                 lr_decay: float = 1.0,
                 scale: str = "standard", pair_sampling: str = "uniform", approx_alpha: float = 8.0,
-                swa_start: int = 0):
+                swa_start: int = 0, gain_weight: float = 0.0, input_noise: float = 0.0,
+                listnet_temp: float = 1.0, listnet_on: str = "gain"):
     """Train a pointwise or pairwise scorer. Restores the best dev-nDCG weights.
 
     dev is the early-stopping monitor; pass a query-disjoint slice of TRAIN so the
@@ -272,10 +348,10 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
     """
     if kind not in ("pointwise", "pairwise"):
         raise ValueError("kind must be 'pointwise' or 'pairwise'")
-    if pair_weighting not in ("none", "delta_ndcg", "approx_ndcg"):
-        raise ValueError("pair_weighting must be 'none', 'delta_ndcg', or 'approx_ndcg'")
-    if pair_sampling not in ("uniform", "gain", "hard"):
-        raise ValueError("pair_sampling must be 'uniform', 'gain', or 'hard'")
+    if pair_weighting not in ("none", "delta_ndcg", "approx_ndcg", "listnet"):
+        raise ValueError("pair_weighting must be 'none', 'delta_ndcg', 'approx_ndcg', or 'listnet'")
+    if pair_sampling not in ("uniform", "gain", "hard", "lambda"):
+        raise ValueError("pair_sampling must be 'uniform', 'gain', 'hard', or 'lambda'")
     X, y, q = train
     Xd, yd, qd = dev
     set_seed(seed)
@@ -287,7 +363,8 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
     rng = np.random.RandomState(seed)
     lambdarank = kind == "pairwise" and pair_weighting == "delta_ndcg"
     listwise = kind == "pairwise" and pair_weighting == "approx_ndcg"
-    query_rows = _query_rows(q) if (lambdarank or listwise) else None
+    listnet = kind == "pairwise" and pair_weighting == "listnet"
+    query_rows = _query_rows(q) if (lambdarank or listwise or listnet) else None
 
     history = []
     best_ndcg, best_state, since_best = -np.inf, None, 0
@@ -295,16 +372,22 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
     for epoch in range(1, epochs + 1):
         network.train()
         losses = []
-        if lambdarank or listwise:
+        Xt_epoch = Xt
+        if input_noise > 0:
+            Xt_epoch = Xt + input_noise * torch.randn_like(Xt)
+        if lambdarank or listwise or listnet:
             order = rng.permutation(len(query_rows))
             for b in range(0, len(order), queries_per_batch):
                 batch = [query_rows[i] for i in order[b:b + queries_per_batch]]
-                if listwise:
-                    losses.append(approx_ndcg_query_step(network, optimizer, Xt, yt, batch, approx_alpha))
+                if listnet:
+                    losses.append(listnet_query_step(
+                        network, optimizer, Xt_epoch, yt, batch, temp=listnet_temp, on=listnet_on))
+                elif listwise:
+                    losses.append(approx_ndcg_query_step(network, optimizer, Xt_epoch, yt, batch, approx_alpha))
                 else:
                     losses.append(lambdarank_query_step(
-                        network, optimizer, Xt, yt, batch, pairs_per_query, rng,
-                        trunc=ndcg_trunc, pair_sampling=pair_sampling))
+                        network, optimizer, Xt_epoch, yt, batch, pairs_per_query, rng,
+                        trunc=ndcg_trunc, pair_sampling=pair_sampling, gain_weight=gain_weight))
         elif kind == "pairwise":
             pairs = make_pairs(q, y, pairs_per_query, rng)
             pairs = pairs[rng.permutation(len(pairs))]

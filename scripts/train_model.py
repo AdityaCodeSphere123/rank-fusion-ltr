@@ -106,6 +106,12 @@ def main():
                     help="append a per-feature z-scored copy of the rows")
     ap.add_argument("--query-scale", action="store_true",
                     help="append a copy where every query is rescaled by its own per-feature log-normal draw")
+    ap.add_argument("--permute-view", action="store_true",
+                    help="append a copy with the five fields inside each group shuffled")
+    ap.add_argument("--cell-view", action="store_true",
+                    help="append a copy with 10 percent of feature cells set to 0")
+    ap.add_argument("--mul-view", type=float, default=0.0,
+                    help="if positive, append a copy scaled by 1 + this times unit noise")
     ap.add_argument("--single-field-copies", action="store_true",
                     help="append five copies of the rows, each keeping one MSLR field "
                          "(body, anchor, title, url, whole document) plus features 126-136")
@@ -181,10 +187,39 @@ def main():
             return out
 
         builders.append(("qscale", _qscale))
+    if args.permute_view:
+        def _permute(raw, seed=args.seed):
+            raw = np.asarray(raw, dtype=np.float32)
+            out = np.array(raw, copy=True)
+            rng = np.random.RandomState(seed + 23)
+            for g in range(25):
+                out[:, 5 * g:5 * g + 5] = raw[:, 5 * g + rng.permutation(5)]
+            return out
+
+        builders.append(("permute", _permute))
+    if args.cell_view:
+        def _cell(raw, seed=args.seed):
+            raw = np.asarray(raw, dtype=np.float32)
+            out = np.array(raw, copy=True)
+            rng = np.random.RandomState(seed + 29)
+            out[rng.rand(*out.shape) < 0.10] = 0
+            return out
+
+        builders.append(("cell", _cell))
+    if args.mul_view > 0:
+        mul_scale = float(args.mul_view)
+
+        def _mul(raw, s=mul_scale, seed=args.seed):
+            raw = np.asarray(raw, dtype=np.float32)
+            rng = np.random.RandomState(seed + 31)
+            return (raw * (1.0 + s * rng.randn(*raw.shape).astype(np.float32))).astype(np.float32)
+
+        builders.append(("mul", _mul))
     if args.query_z:
         args.query_ranks = True
     want_ranks = (args.query_ranks or args.group_aggs or args.scale_views or args.single_field_copies
-                  or args.log_view or args.z_view or args.query_scale)
+                  or args.log_view or args.z_view or args.query_scale or args.permute_view
+                  or args.cell_view or args.mul_view > 0)
     if len(builders) > 1 or want_ranks:
         # Fill one preallocated block so the copies are not all live at once.
         probe_q = base_codes

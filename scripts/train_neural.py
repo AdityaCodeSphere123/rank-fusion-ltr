@@ -56,7 +56,7 @@ def main():
     ap.add_argument("--monitor-folds", type=int, default=10)
     ap.add_argument("--holdout-fold", type=int, default=None,
                     help="also drop this TRAIN fold (of --monitor-folds) from training and report it")
-    ap.add_argument("--pair-weighting", choices=["none", "delta_ndcg", "approx_ndcg"], default="none")
+    ap.add_argument("--pair-weighting", choices=["none", "delta_ndcg", "approx_ndcg", "listnet"], default="none")
     ap.add_argument("--pair-sampling", choices=["uniform", "gain", "hard"], default="uniform",
                     help="how delta_ndcg draws its capped pairs: uniform, |gain| biased, or gain times current error")
     ap.add_argument("--approx-alpha", type=float, default=8.0, help="sharpness of the smooth ranks in approx_ndcg")
@@ -64,13 +64,15 @@ def main():
     ap.add_argument("--ndcg-trunc", type=int, default=None)
     ap.add_argument("--weight-decay", type=float, default=0.0)
     ap.add_argument("--lr-decay", type=float, default=1.0)
-    ap.add_argument("--scale", choices=["standard", "robust"], default="standard",
-                    help="affine feature scaler stored in the artifact (robust = median / IQR)")
+    ap.add_argument("--scale", default="standard",
+                    help="affine feature scaler stored in the artifact: standard, robust, or winsor (optional percentile, e.g. winsor5)")
     ap.add_argument("--use-dev", action="store_true",
                     help="append the dev split to the training rows. Only with --monitor train-slice; "
                          "the monitor and the holdout stay query-disjoint slices of TRAIN")
     ap.add_argument("--swa-start", type=int, default=0,
                     help="average weights from this epoch onward and keep them when the monitor is higher")
+    ap.add_argument("--gain-weight", type=float, default=0.0,
+                    help="add this times MSE(score, 2^label-1) on top of the LambdaRank loss")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--no-save", action="store_true", help="experiment only: do not write the .pt artifact")
     ap.add_argument("--log", default=None, help="append a JSON summary line to this file")
@@ -111,7 +113,7 @@ def main():
                                      ndcg_trunc=args.ndcg_trunc, weight_decay=args.weight_decay,
                                      lr_decay=args.lr_decay, scale=args.scale,
                                      pair_sampling=args.pair_sampling, approx_alpha=args.approx_alpha,
-                                     swa_start=args.swa_start)
+                                     swa_start=args.swa_start, gain_weight=args.gain_weight)
         secs = time.perf_counter() - t0
         scorer = make_scorer(net, std)
         best = max(hist, key=lambda h: h["dev_ndcg@10"])

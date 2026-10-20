@@ -4,12 +4,13 @@ fuse_candidates: unweighted CombSUM of BM25 (document and title) and LMIR.DIR.
 LMIR.JM is dropped; on TRAIN every channel-weight grid set it to 0.
 
 rerank_with_ltr: the LightGBM model loaded by prepare(). Rows are padded or
-truncated to the model's width. Three MSLR layouts are recognised. Twice the
+truncated to the model's width. Four MSLR layouts are recognised. Twice the
 candidate width is raw features plus within-query percentiles. Width 3D
 also appends a within-query z-score of each raw feature. Width 2D+150
 (D >= 125) also appends, for each of the 25 field-groups, the max, mean and
-min across the five fields, and the percentiles of those aggregates. Every
-other width, including recipe.py models, is scored on the raw vectors.
+min across the five fields, and the percentiles of those aggregates. Width
+3D+150 appends the z-scores and those aggregates. Every other width,
+including recipe.py models, is scored on the raw vectors.
 
 prepare() only loads the artifact and raises if it is missing. Both rankers
 return at most k (doc_id, score) pairs, best first, ids drawn only from the
@@ -141,7 +142,11 @@ def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int
         X[i, :n] = r[:n]
     X = sanitize(X)
     # 2D+150: raw, percentiles, field max/mean/min, percentiles of those.
-    if observed >= _N_GROUPS * _N_FIELDS and width == 2 * observed + 2 * _N_AGGS:
+    # 3D+150: raw, percentiles, within-query z, then the same field aggregates.
+    if observed >= _N_GROUPS * _N_FIELDS and width == 3 * observed + 2 * _N_AGGS:
+        aggs = group_aggregates(X)
+        X = np.hstack([X, within_query_ranks(X), within_query_z(X), aggs, within_query_ranks(aggs)])
+    elif observed >= _N_GROUPS * _N_FIELDS and width == 2 * observed + 2 * _N_AGGS:
         aggs = group_aggregates(X)
         X = np.hstack([X, within_query_ranks(X), aggs, within_query_ranks(aggs)])
     elif observed > 0 and width == 3 * observed:
