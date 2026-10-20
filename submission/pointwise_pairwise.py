@@ -322,6 +322,17 @@ def _standardizer_for(X: np.ndarray, scale: str) -> Standardizer:
         std = clipped.std(axis=0)
         std = np.where(std < 1e-8, 1.0, std)
         return Standardizer(med.astype(np.float64), std.astype(np.float64))
+    if scale == "mixed":
+        lo = np.percentile(X, 1, axis=0)
+        hi = np.percentile(X, 99, axis=0)
+        clipped = np.clip(X, lo, hi)
+        std_w = clipped.std(axis=0)
+        std_s = X.std(axis=0)
+        heavy = std_s > 1.5 * np.maximum(std_w, 1e-8)
+        mean = np.where(heavy, clipped.mean(axis=0), X.mean(axis=0))
+        std = np.where(heavy, std_w, std_s)
+        std = np.where(std < 1e-8, 1.0, std)
+        return Standardizer(mean.astype(np.float64), std.astype(np.float64))
     if scale != "robust":
         raise ValueError("scale must be 'standard', 'robust', or 'winsor'")
     med = np.median(X, axis=0)
@@ -336,7 +347,7 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
                 ndcg_trunc: Optional[int] = None, weight_decay: float = 0.0,                 lr_decay: float = 1.0,
                 scale: str = "standard", pair_sampling: str = "uniform", approx_alpha: float = 8.0,
                 swa_start: int = 0, gain_weight: float = 0.0, input_noise: float = 0.0,
-                listnet_temp: float = 1.0, listnet_on: str = "gain"):
+                feature_drop: float = 0.0, listnet_temp: float = 1.0, listnet_on: str = "gain"):
     """Train a pointwise or pairwise scorer. Restores the best dev-nDCG weights.
 
     dev is the early-stopping monitor; pass a query-disjoint slice of TRAIN so the
@@ -373,8 +384,12 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
         network.train()
         losses = []
         Xt_epoch = Xt
-        if input_noise > 0:
-            Xt_epoch = Xt + input_noise * torch.randn_like(Xt)
+        if input_noise > 0 or feature_drop > 0:
+            Xt_epoch = Xt.clone()
+            if input_noise > 0:
+                Xt_epoch = Xt_epoch + input_noise * torch.randn_like(Xt_epoch)
+            if feature_drop > 0:
+                Xt_epoch = Xt_epoch.masked_fill(torch.rand_like(Xt_epoch) < feature_drop, 0)
         if lambdarank or listwise or listnet:
             order = rng.permutation(len(query_rows))
             for b in range(0, len(order), queries_per_batch):
