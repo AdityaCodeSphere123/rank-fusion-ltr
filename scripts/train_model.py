@@ -116,6 +116,8 @@ def main():
                     help="fraction of cells zeroed in the cell view")
     ap.add_argument("--mul-view", type=float, default=0.0,
                     help="if positive, append a copy scaled by 1 + this times unit noise")
+    ap.add_argument("--times-view", default="0",
+                    help="comma-separated constants; each appends one copy multiplied by that constant")
     ap.add_argument("--single-field-copies", action="store_true",
                     help="append five copies of the rows, each keeping one MSLR field "
                          "(body, anchor, title, url, whole document) plus features 126-136")
@@ -237,11 +239,13 @@ def main():
             return (raw * (1.0 + s * rng.randn(*raw.shape).astype(np.float32))).astype(np.float32)
 
         builders.append(("mul", _mul))
+    for j, factor in enumerate(float(s) for s in str(args.times_view).split(",") if float(s) != 0.0):
+        builders.append(("times", lambda raw, f=factor, j=j: (np.asarray(raw, dtype=np.float32) * f)))
     if args.query_z:
         args.query_ranks = True
     want_ranks = (args.query_ranks or args.group_aggs or args.scale_views or args.single_field_copies
                   or args.log_view or args.z_view or args.query_scale or args.permute_view
-                  or args.cell_view or args.mul_view > 0)
+                  or args.cell_view or args.mul_view > 0 or str(args.times_view) not in ("0", "0.0", ""))
     if len(builders) > 1 or want_ranks:
         # Fill one preallocated block so the copies are not all live at once.
         probe_q = base_codes

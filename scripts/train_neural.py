@@ -73,6 +73,10 @@ def main():
                     help="average weights from this epoch onward and keep them when the monitor is higher")
     ap.add_argument("--gain-weight", type=float, default=0.0,
                     help="add this times MSE(score, 2^label-1) on top of the LambdaRank loss")
+    ap.add_argument("--input-noise", type=float, default=0.0,
+                    help="Gaussian noise added to standardized features each epoch")
+    ap.add_argument("--feature-drop", type=float, default=0.0,
+                    help="fraction of standardized feature cells zeroed each epoch")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--no-save", action="store_true", help="experiment only: do not write the .pt artifact")
     ap.add_argument("--log", default=None, help="append a JSON summary line to this file")
@@ -113,7 +117,8 @@ def main():
                                      ndcg_trunc=args.ndcg_trunc, weight_decay=args.weight_decay,
                                      lr_decay=args.lr_decay, scale=args.scale,
                                      pair_sampling=args.pair_sampling, approx_alpha=args.approx_alpha,
-                                     swa_start=args.swa_start, gain_weight=args.gain_weight)
+                                     swa_start=args.swa_start, gain_weight=args.gain_weight,
+                                     input_noise=args.input_noise, feature_drop=args.feature_drop)
         secs = time.perf_counter() - t0
         scorer = make_scorer(net, std)
         best = max(hist, key=lambda h: h["dev_ndcg@10"])
