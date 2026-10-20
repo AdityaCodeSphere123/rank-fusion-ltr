@@ -5,13 +5,13 @@ Measured numbers: `Decision.md`. Logs: `experiments/`.
 ## Training-data declaration
 | model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
 |---|---|---|---|
-| LambdaMART `model.txt` | TRAIN and DEV. 408 columns: the 136 raw features, their within-query percentiles, and their within-query z-scores. 600 trees on five copies (raw, 0.05×-std noise, log1p, per-feature z-score, per-query rescaling), then 250 trees at learning rate 0.03 on five copies (raw, 0.20×-std noise, a shuffle of the five fields in each group, 10% of cells set to 0, and a ×(1+0.20 noise) copy) | tree count on a fifth of TRAIN not used in the first fit. 600 then 250 trees kept | none |
+| LambdaMART `model.txt` | TRAIN and DEV. 408 columns: the 136 raw features, their within-query percentiles, and their within-query z-scores. 600 trees, then 250 at learning rate 0.03, then 300 at learning rate 0.05 with at least 40 rows per leaf. The last 300 see only corrupted copies: 0.20×-std noise, a shuffle of the five fields in each group, 10% of cells set to 0, and a ×(1+0.20 noise) copy | tree count on a fifth of TRAIN not used in the first fit. 1150 trees kept | none |
 | pointwise_model.pt | TRAIN only (5,400 queries = 9/10 of TRAIN) | not tuned | a disjoint tenth of TRAIN queries (seed 0) |
 | pairwise_model.pt | TRAIN only (9/10 of TRAIN). Column mean and std are fit after clipping each feature to its 1st and 99th percentile | settings compared on a second disjoint tenth of TRAIN | the remaining tenth of TRAIN (seed 0) |
 | recipe.py | each benchmark's train and vali | MSLR TRAIN CV and synthetic tasks cut from TRAIN | that benchmark's vali nDCG@10, then a refit on train+vali |
 | fusion (`fuse_candidates`) | none | method, channel subset, and weights on TRAIN (all queries, and a 5-way selection check) | — |
 
-DEV is inside the LambdaMART fit, so 0.6737 is an in-training score. The neural models, the fusion weights, and the recipe do not use DEV.
+DEV is inside the LambdaMART fit, so 0.6786 is an in-training score. The neural models, the fusion weights, and the recipe do not use DEV.
 
 ## Fusion method
 CombSUM: per-query min-max of each channel, then an unweighted sum of BM25 whole document, BM25 title, and LMIR.DIR. LMIR.JM is omitted.
@@ -21,7 +21,7 @@ On all 6,000 TRAIN queries, RRF (c from 1 to 500; best c=150, 0.2937) stayed bel
 `rrf_scores`, `combsum_scores`, and `combmnz_scores` are in `submission/fusion.py`.
 
 ## LambdaMART hyperparameters
-Shipped model: `objective=lambdarank, num_leaves=127, learning_rate=0.05, min_data_in_leaf=20, feature_fraction=0.5, lambda_l2=0.1, bagging_fraction=0.9, bagging_freq=1`, 850 trees, `num_threads=8, deterministic=True, force_row_wise=True, seed=1`. The last 250 trees use learning rate 0.03.
+Shipped model: `objective=lambdarank, num_leaves=127, learning_rate=0.05, min_data_in_leaf=20, feature_fraction=0.5, lambda_l2=0.1, bagging_fraction=0.9, bagging_freq=1`, 1150 trees, `num_threads=8, deterministic=True, force_row_wise=True, seed=1`. Trees 601–850 use learning rate 0.03. Trees 851–1150 use learning rate 0.05 and `min_data_in_leaf=40`.
 
 408 columns: the 136 raw features, their within-query average-tie percentiles, and their within-query z-scores. `rerank_with_ltr` rebuilds those columns when the loaded model width is `3D`. The fit stacks five copies of each TRAIN and DEV query (raw, 0.05×-std noise, log1p, per-feature z-score, per-query log-normal scale). Percentiles are unchanged by a monotone map of one feature. A within-query z-score is unchanged by a positive scale and shift of that feature.
 
@@ -34,15 +34,15 @@ Tree count, fit on the other four fifths of TRAIN plus DEV and scored on the rem
 | 600 | 0.6849 | 0.4830 | 0.4560 |
 | 800 | 0.7168 | 0.4817 | 0.4548 |
 
-600 trees is the first stage. The shipped file continues that model for 250 trees at learning rate 0.03. Those trees see each TRAIN and DEV query five times: raw, additive noise at 0.20× feature std, a shuffle of the five fields in each group, 10% of cells set to 0, and a multiplicative perturbation. In-training DEV nDCG@10 is 0.6737 (the 600-tree file was 0.6639). On that same DEV, the continued file scores higher under additive noise (0.4591 against 0.4420), a field shuffle (0.4621 against 0.4428), dropped cells (0.5249 against 0.4733), and multiplicative noise (0.5069 against 0.4890). `submission/model_d13.txt` is the 600-tree file. `submission/model_d14.txt` is the 600-tree file trained only on the harsher copies. They are not in the zip.
+600 trees is the first stage, then 250 at learning rate 0.03. The shipped file adds 300 trees at learning rate 0.05 with at least 40 rows in a leaf. Those trees see no clean copy: each TRAIN and DEV query is fit as additive noise at 0.20× feature std, a shuffle of the five fields in each group, 10% of cells set to 0, and a multiplicative perturbation. In-training DEV nDCG@10 is 0.6786 (the 850-tree file was 0.6737). On that same DEV, against the 850-tree file: additive noise 0.4729 against 0.4591, field shuffle 0.4681 against 0.4621, dropped cells 0.5479 against 0.5249, multiplicative noise 0.5298 against 0.5069. A global ×10 is lower, 0.5807 against 0.6402. `submission/model_d15.txt` is the 850-tree file. It is not in the zip.
 
 ```
 python scripts/train_model.py --train data/train --dev data/dev --use-dev \
-  --init-model submission/model_d13.txt --out submission/model.txt --trees 250 \
-  --learning-rate 0.03 --num-leaves 127 --min-data-in-leaf 20 --lambda-l2 0.1 \
-  --feature-fraction 0.5 --bagging-fraction 0.9 --bagging-freq 1 \
+  --init-model submission/model_d15.txt --out submission/model.txt --trees 300 \
+  --learning-rate 0.05 --num-leaves 127 --min-data-in-leaf 40 --lambda-l2 0.1 \
+  --feature-fraction 0.5 --bagging-fraction 0.9 --bagging-freq 1 --clean-copies 0 \
   --feature-noise 0.20 --query-z --permute-view --cell-view --mul-view 0.20 \
-  --seed 2 --num-threads 6
+  --seed 3 --num-threads 8
 ```
 
 ## Track P
@@ -67,7 +67,7 @@ Earlier TRAIN-only sweep, not the shipped model (`Decision.md` D5, `experiments/
 Every leaf count peaks near 0.474 validation. More leaves raise the train score. The 255-leaf model at 2000 trees reaches train 0.94 and validation falls. The 2000-tree fit (clean DEV 0.4845, Track C2 0.3533) was not shipped.
 
 ## Dev accuracy and generalization
-The shipped tree uses 127 leaves and 850 trees. DEV is in the fit, so 0.6737 is an in-training score. Clean-copy train nDCG@10 is 0.6697. The neural models and the fusion weights were not refit. `recipe.py` sets its hyperparameters from the benchmark size, maps feature values above 1e30 to missing, and early-stops on that benchmark's validation file. Within-query percentiles were tried in the recipe and left out: on the checked tasks they did not raise nDCG@10.
+The shipped tree uses 127 leaves and 1150 trees. DEV is in the fit, so 0.6786 is an in-training score. The neural models and the fusion weights were not refit. `recipe.py` sets its hyperparameters from the benchmark size, maps feature values above 1e30 to missing, and early-stops on that benchmark's validation file. Within-query percentiles were tried in the recipe and left out: on the checked tasks they did not raise nDCG@10.
 
 ## AI-use disclosure
 Claude Code (Anthropic, Claude Opus 5.5) was used to read the spec and starter code, write `submission/fusion.py`, `submission/pointwise_pairwise.py`, `submission/ranking.py`, `submission/recipe.py`, and the experiment scripts (`scripts/cv_sweep.py`, `scripts/fusion_eval.py`, `scripts/recipe_sim.py`, `scripts/robustness_eval.py`, `scripts/data_cache.py`, plus changes to `scripts/train_model.py` and `scripts/train_neural.py`), run the experiments, and draft `Decision.md` and these notes.

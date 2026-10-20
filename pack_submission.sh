@@ -25,11 +25,19 @@ rsync -a \
   --exclude 'a3-rankfusion-LTR.tex' \
   --exclude 'pack_submission.sh' \
   --exclude 'submission/model_*.txt' \
-  --exclude 'scripts/heldout_eval.py' \
-  --exclude 'scripts/recipe_rank_probe.py' \
   --exclude 'Decision.md' \
-  --exclude 'scripts/istella_probe.py' \
   --exclude 'experiments/' \
+  --exclude 'runs/' \
+  --include 'scripts/cv_lambdamart.py' \
+  --include 'scripts/data_cache.py' \
+  --include 'scripts/lambdamart_utils.py' \
+  --include 'scripts/make_toy_data.py' \
+  --include 'scripts/prepare_mslr.py' \
+  --include 'scripts/run_recipe.py' \
+  --include 'scripts/smoke_test.sh' \
+  --include 'scripts/train_model.py' \
+  --include 'scripts/train_neural.py' \
+  --exclude 'scripts/*' \
   "${ROOT}/" "${DEST}/"
 
 rm -f "$OUT"

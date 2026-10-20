@@ -151,14 +151,16 @@ def main():
     n_queries = int(base_codes[-1]) + 1
     # Views are built one at a time. Copy ids are shifted so a percentile never
     # mixes two copies of the same query.
-    builders = [("clean", lambda raw, _f=None: raw)]
+    builders = []
+    if args.clean_copies > 0:
+        builders.append(("clean", lambda raw, _f=None: raw))
     if scales:
         std = X.std(axis=0).astype(np.float32)
         for i, scale in enumerate(scales):
             builders.append(("noise", lambda raw, s=scale, sd=std, i=i: (
                 raw + s * sd * np.random.RandomState(args.seed + i).randn(*raw.shape).astype(np.float32)
             ).astype(np.float32)))
-    for i in range(1, max(1, args.clean_copies)):
+    for i in range(1, max(0, args.clean_copies)):
         builders.append(("clean", lambda raw: raw))
     if args.single_field_copies:
         for field in range(5):
