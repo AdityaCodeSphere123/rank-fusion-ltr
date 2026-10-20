@@ -118,6 +118,8 @@ def main():
                     help="append a copy with --cell-rate of cells set to missing")
     ap.add_argument("--drop-field-view", action="store_true",
                     help="append a copy that zeroes one of the five fields, chosen per query")
+    ap.add_argument("--drop-field-count", type=int, default=1,
+                    help="how many of the five fields to zero in the drop-field view")
     ap.add_argument("--mul-view", type=float, default=0.0,
                     help="if positive, append a copy scaled by 1 + this times unit noise")
     ap.add_argument("--times-view", default="0",
@@ -248,15 +250,18 @@ def main():
     if args.drop_field_view:
         q_drop = q
 
-        def _drop_field(raw, seed=args.seed, q=q_drop):
+        n_drop = max(1, min(4, int(args.drop_field_count)))
+
+        def _drop_field(raw, seed=args.seed, q=q_drop, n_drop=n_drop):
             raw = np.asarray(raw, dtype=np.float32)
             out = np.array(raw, copy=True)
             rng = np.random.RandomState(seed + 41)
             starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
             ends = np.r_[starts[1:], len(q)]
             for a, b in zip(starts, ends):
-                field = int(rng.randint(0, 5))
-                out[a:b, field:125:5] = 0
+                for field in rng.choice(5, size=n_drop, replace=False):
+                    out[a:b, int(field):125:5] = 0
+            return out
             return out
 
         builders.append(("dropfield", _drop_field))
