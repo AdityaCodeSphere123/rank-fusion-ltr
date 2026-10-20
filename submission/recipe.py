@@ -89,7 +89,7 @@ def _round_cost_s(n_rows: int, n_features: int, params) -> float:
     return SEC_PER_UNIT * SLOWDOWN * n_rows * max(1.0, n_features * params["feature_fraction"]) * leaves_factor
 
 
-def rule_params(n_rows: int, n_queries: int, n_features: int, n_labels: int, seed: int, **overrides):
+def rule_params(n_rows: int, n_features: int, seed: int, **overrides):
     """Leaves grow with sqrt(rows); min_data_in_leaf with rows; fewer columns as D grows."""
     num_leaves = int(np.clip(2 ** round(np.log2(max(n_rows, 1) ** 0.5 / 16.0)) - 1, 7, 63))
     min_data_in_leaf = int(np.clip(n_rows / 4000.0, 20, 200))
@@ -106,10 +106,9 @@ def rule_params(n_rows: int, n_queries: int, n_features: int, n_labels: int, see
     return params
 
 
-def plan(n_rows: int, n_vali_rows: int, n_queries: int, n_features: int, n_labels: int, seed: int,
-         refit: bool = True, **overrides):
+def plan(n_rows: int, n_features: int, seed: int, refit: bool = True, **overrides):
     """If 0.05 would allow fewer than 800 rounds, double the learning rate instead."""
-    params = rule_params(n_rows, n_queries, n_features, n_labels, seed, **overrides)
+    params = rule_params(n_rows, n_features, seed, **overrides)
     cost = _round_cost_s(n_rows, n_features, params)
     max_rounds = int(FIT_BUDGET_S / cost)
     if max_rounds < 800 and "learning_rate" not in overrides:
@@ -142,8 +141,7 @@ def fit_arrays(X, y, g, Xv, yv, gv, seed: int = 0, deadline: float = None, refit
     deadline = deadline if deadline is not None else t0 + TIME_BUDGET_S
     n_rows, D = X.shape
     n_vali = Xv.shape[0]
-    n_labels = int(len(np.unique(np.concatenate([y, yv]))))
-    params, max_rounds, patience, refit = plan(n_rows, n_vali, len(g), D, n_labels, seed, refit=refit, **overrides)
+    params, max_rounds, patience, refit = plan(n_rows, D, seed, refit=refit, **overrides)
     info = {"params": {k: params[k] for k in ("num_leaves", "min_data_in_leaf", "learning_rate",
                                               "feature_fraction", "lambda_l2")},
             "max_rounds": max_rounds, "patience": patience}

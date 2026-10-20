@@ -1,6 +1,6 @@
 # Submission notes
 
-Measured numbers: `Decision.md`. Logs: `experiments/`.
+Measured numbers are in the sections below.
 
 ## Training-data declaration
 | model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
@@ -34,7 +34,7 @@ Tree count, fit on the other four fifths of TRAIN plus DEV and scored on the rem
 | 600 | 0.6849 | 0.4830 | 0.4560 |
 | 800 | 0.7168 | 0.4817 | 0.4548 |
 
-The table above is an earlier five-copy fit. Graded C2 was 0.3884 for the 1200-tree file (in-training DEV 0.6518), 0.3905 for the 1450-tree file (in-training DEV 0.6494), and 0.3919 for the 1750-tree file (in-training DEV 0.6534). A 1550-tree continuation that added a clean copy and a ×10 copy scored Track C2 0.3872 (in-training DEV 0.6780) and was not kept. The shipped file then adds 300 trees with no clean copy, 120 trees on one clean copy, 200 trees on heavier additive and multiplicative noise, 25 trees on one clean copy, 150 trees on 0.40×-std noise plus a per-query rescaling and 50% missing cells, and 40 trees on one clean copy. In-training DEV nDCG@10 is 0.6811. On an 800-query DEV slice, against the 2395-tree file: clean 0.6797 against 0.6775, additive noise at 0.50× std 0.4222 against 0.4233, additive 0.70 0.3935 against 0.3926, multiplicative 0.85 0.4327 against 0.4355, 50% cells missing 0.4297 against 0.4264, per-query rescaling 0.6154 against 0.6044, per-query field shuffle 0.5183 against 0.5188. `submission/model_d25.txt` is the 2395-tree file. `submission/model_d23.txt` is the 2170-tree file. `submission/model_d21.txt` is the 1750-tree file. `submission/model_d20.txt` is the 1450-tree file. None of those is in the zip.
+The table above is an earlier five-copy fit. Graded C2 was 0.3884 for the 1200-tree file (in-training DEV 0.6518), 0.3905 for the 1450-tree file (in-training DEV 0.6494), and 0.3919 for the 1750-tree file (in-training DEV 0.6534). A 1550-tree continuation that added a clean copy and a ×10 copy scored Track C2 0.3872 (in-training DEV 0.6780) and was not kept. The shipped file then adds 300 trees with no clean copy, 120 trees on one clean copy, 200 trees on heavier additive and multiplicative noise, 25 trees on one clean copy, 150 trees on 0.40×-std noise plus a per-query rescaling and 50% missing cells, and 40 trees on one clean copy. In-training DEV nDCG@10 is 0.6811. On an 800-query DEV slice, against the 2395-tree file: clean 0.6797 against 0.6775, additive noise at 0.50× std 0.4222 against 0.4233, additive 0.70 0.3935 against 0.3926, multiplicative 0.85 0.4327 against 0.4355, 50% cells missing 0.4297 against 0.4264, per-query rescaling 0.6154 against 0.6044, per-query field shuffle 0.5183 against 0.5188. Intermediate checkpoints were not kept.
 
 ```
 python scripts/train_model.py --train data/train --dev data/dev --use-dev \
@@ -104,7 +104,7 @@ Settings were compared on a tenth of TRAIN that those fits did not use. Ordinary
 
 Averaging three seeds (0.3459), a gain-target term (0.4102), a listwise softmax (0.3823), and a short low-learning-rate continuation of an earlier file were not used. Input noise with 3% feature dropout scored DEV 0.4523. Drawing pairs by gain times error scored DEV 0.4536. Neither replaced the shipped file.
 
-Earlier TRAIN-only sweep, not the shipped model (`Decision.md` D5, `experiments/cv_report.txt`):
+Earlier TRAIN-only sweep, not the shipped model:
 
 | config (lr / leaves / min_data_in_leaf / feature_fraction) | best trees | CV val nDCG@10 | train | val/train |
 |---|---|---|---|---|
@@ -122,7 +122,7 @@ Every leaf count peaks near 0.474 validation. More leaves raise the train score.
 The shipped tree uses 127 leaves and 2585 trees. DEV is in the fit, so 0.6811 is an in-training score. The neural models and the fusion weights were not refit. `recipe.py` sets its hyperparameters from the benchmark size, maps feature values above 1e30 to missing, and early-stops on that benchmark's validation file. Within-query percentiles were tried in the recipe and left out: on the checked tasks they did not raise nDCG@10.
 
 ## AI-use disclosure
-Claude Code (Anthropic, Claude Opus 5.5) was used to read the spec and starter code, write `submission/fusion.py`, `submission/pointwise_pairwise.py`, `submission/ranking.py`, `submission/recipe.py`, and `scripts/data_cache.py`, change `scripts/train_model.py` and `scripts/train_neural.py`, run the experiments, and draft `Decision.md` and these notes.
+Claude Code (Anthropic, Claude Opus 5.5) was used to read the spec and starter code, write `submission/fusion.py`, `submission/pointwise_pairwise.py`, `submission/ranking.py`, `submission/recipe.py`, and `scripts/data_cache.py`, change `scripts/train_model.py` and `scripts/train_neural.py`, run the experiments, and draft these notes.
 
 ## Code provenance
 No external code was copied. Formulas, from the assignment references: RRF (Cormack, Clarke and Buettcher, SIGIR 2009); CombSUM and CombMNZ (Fox and Shaw, TREC-2 1994); RankNet (Burges et al., ICML 2005); LambdaRank |ΔnDCG| pair weights (Burges, MSR-TR-2010-82) in `delta_ndcg_weights` and `weighted_ranknet_loss`. LambdaMART is LightGBM `lambdarank`. Libraries: NumPy, LightGBM, PyTorch, as in `requirements.txt`.
