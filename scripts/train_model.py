@@ -114,6 +114,10 @@ def main():
                     help="append a copy with --cell-rate of feature cells set to 0")
     ap.add_argument("--cell-rate", type=float, default=0.10,
                     help="fraction of cells zeroed in the cell view")
+    ap.add_argument("--cell-missing", action="store_true",
+                    help="append a copy with --cell-rate of cells set to missing")
+    ap.add_argument("--drop-field-view", action="store_true",
+                    help="append a copy that zeroes one of the five fields, chosen per query")
     ap.add_argument("--mul-view", type=float, default=0.0,
                     help="if positive, append a copy scaled by 1 + this times unit noise")
     ap.add_argument("--times-view", default="0",
@@ -230,6 +234,32 @@ def main():
             return out
 
         builders.append(("cell", _cell))
+    if args.cell_missing:
+        rate = float(args.cell_rate)
+
+        def _missing(raw, seed=args.seed, rate=rate):
+            raw = np.asarray(raw, dtype=np.float32)
+            out = np.array(raw, dtype=np.float32, copy=True)
+            rng = np.random.RandomState(seed + 37)
+            out[rng.rand(*out.shape) < rate] = np.nan
+            return out
+
+        builders.append(("missing", _missing))
+    if args.drop_field_view:
+        q_drop = q
+
+        def _drop_field(raw, seed=args.seed, q=q_drop):
+            raw = np.asarray(raw, dtype=np.float32)
+            out = np.array(raw, copy=True)
+            rng = np.random.RandomState(seed + 41)
+            starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+            ends = np.r_[starts[1:], len(q)]
+            for a, b in zip(starts, ends):
+                field = int(rng.randint(0, 5))
+                out[a:b, field:125:5] = 0
+            return out
+
+        builders.append(("dropfield", _drop_field))
     if args.mul_view > 0:
         mul_scale = float(args.mul_view)
 
@@ -245,7 +275,8 @@ def main():
         args.query_ranks = True
     want_ranks = (args.query_ranks or args.group_aggs or args.scale_views or args.single_field_copies
                   or args.log_view or args.z_view or args.query_scale or args.permute_view
-                  or args.cell_view or args.mul_view > 0 or str(args.times_view) not in ("0", "0.0", ""))
+                  or args.cell_view or args.cell_missing or args.drop_field_view
+                  or args.mul_view > 0 or str(args.times_view) not in ("0", "0.0", ""))
     if len(builders) > 1 or want_ranks:
         # Fill one preallocated block so the copies are not all live at once.
         probe_q = base_codes
