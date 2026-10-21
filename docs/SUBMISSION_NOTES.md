@@ -144,7 +144,9 @@ python scripts/train_neural.py --kind pairwise --train data/train --dev data/dev
 
 Averaging three seeds (0.3459), a gain-target term (0.4102), and a listwise softmax (0.3823) were not used. Input noise with 3% feature dropout scored DEV 0.4523. Drawing pairs by gain times error scored DEV 0.4536. Neither replaced the shipped file.
 
-`pointwise_model.pt` is a smaller MLP, hidden width 64, squared error, same early-stop split of TRAIN. It is not used to initialize the pairwise model.
+`pointwise_model.pt` is a smaller MLP, hidden width 64, squared error, same early-stop split of TRAIN. It is not used to initialize the pairwise model. DEV, reported only: nDCG@10 0.4225.
+
+Dev-set nDCG@10 of the three submitted models: pointwise 0.4225, pairwise 0.4541, LambdaMART 0.7079. The LambdaMART number is in-training, because DEV is inside that fit. Pointwise and pairwise were trained on TRAIN and then scored on DEV.
 
 ## Recipe
 `recipe.py` reads each benchmark's own train and vali files. Values above 1e30 are stored as missing. Leaf size, column sampling, L2, and the round budget follow the number of rows and features. It early-stops on that benchmark's vali nDCG@10, then refits on train+vali when the size-based cost estimate fits in the time budget. A wall-clock stop at 15 minutes is a safety limit inside the 20-minute cap. Within-query percentiles were tried and left out: on the checked tasks they did not raise nDCG@10.

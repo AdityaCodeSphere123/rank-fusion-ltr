@@ -29,4 +29,4 @@ Docs: `docs/SUBMISSION_INTERFACE.md`, `docs/GRADING.md`, `docs/RANKNET_PRIMER.md
 ## Layout
 `harness/` metrics, I/O, CV, leaderboard formulas, runner (do not edit; staff run an identical copy) - `submission/` your entry - `scripts/` tooling - `data/toy/` and `data/toy_transfer/` synthetic data - `tests/`.
 
-The shipped `submission/model.txt` / `pointwise_model.pt` / `pairwise_model.pt` are trained on the toy data only: they exist so the pipeline runs end to end.
+The shipped `submission/model.txt`, `pointwise_model.pt`, and `pairwise_model.pt` are the submission artifacts. Which splits they were trained on, and the fusion method and LambdaMART settings, are in `docs/SUBMISSION_NOTES.md`.
