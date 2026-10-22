@@ -11,7 +11,7 @@
 DEV is inside the LambdaMART fit, so its DEV score of 0.7079 is an in-training score.
 
 ## Fusion method and why
-`fuse_candidates` is CombSUM of per-query min-max scores over BM25 whole document, BM25 title and LMIR.DIR. On all 6,000 TRAIN queries RRF (best c = 150, 0.2937) scored below CombSUM (0.2961) and CombMNZ (0.2958). A channel weight grid on TRAIN set LMIR.JM to 0 so it is dropped. DEV: nDCG@10 0.3105, MAP@10 0.1302.
+`fuse_candidates` is CombSUM of per-query min-max scores over BM25 whole document, BM25 title and LMIR.DIR. On all 6,000 TRAIN queries RRF (best c = 150, 0.2937) scored below CombSUM (0.2961) and CombMNZ (0.2958). A channel weight grid on TRAIN set LMIR.JM to 0 so it is dropped, and the three-channel sum scores 0.3000 on TRAIN. DEV: nDCG@10 0.3105, MAP@10 0.1302.
 
 ## LambdaMART hyperparameters and how chosen (cite your CV table)
 Grouped 5-fold CV on TRAIN only, with no early stopping on the reported fold:
