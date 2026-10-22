@@ -14,7 +14,8 @@ from torch import nn
 
 from harness.metrics import mean_ndcg_from_scores
 from harness.preprocessing import Standardizer
-from harness.neural import ScoringNetwork, load_scorer, make_scorer, save_scorer  
+# load_scorer and save_scorer are re-exported: staff and scripts/train_neural.py import them from here
+from harness.neural import MAX_HIDDEN_LAYERS, MAX_WIDTH, ScoringNetwork, load_scorer, make_scorer, save_scorer  # noqa: F401
 
 
 def set_seed(seed: int) -> None:
@@ -34,6 +35,18 @@ def make_pairs(qids, labels, pairs_per_query: int, rng: np.random.RandomState) -
     Same query only, unequal labels only, at most pairs_per_query per query,
     sampled without replacement from rng.
     """
+    return _sample_pairs(qids, labels, pairs_per_query, rng, by_gain=False)
+
+
+def make_pairs_gain(qids, labels, pairs_per_query: int, rng: np.random.RandomState) -> np.ndarray:
+    """Like make_pairs, but a capped sample is drawn with probability proportional to |Δgain|.
+
+    Gain is 2^label - 1. Unequal integer labels have unequal gains, so every legal pair stays eligible.
+    """
+    return _sample_pairs(qids, labels, pairs_per_query, rng, by_gain=True)
+
+
+def _sample_pairs(qids, labels, pairs_per_query: int, rng: np.random.RandomState, by_gain: bool) -> np.ndarray:
     labels = np.asarray(labels)
     out = []
     for rows in _query_rows(qids):
@@ -46,7 +59,12 @@ def make_pairs(qids, labels, pairs_per_query: int, rng: np.random.RandomState) -
         if len(i) == 0:
             continue
         if len(i) > pairs_per_query:
-            pick = rng.choice(len(i), size=pairs_per_query, replace=False)
+            p = None
+            if by_gain:
+                gain = np.power(2.0, lab.astype(np.float64)) - 1.0
+                p = np.abs(gain[i] - gain[j])
+                p = p / p.sum()
+            pick = rng.choice(len(i), size=pairs_per_query, replace=False, p=p)
             i, j = i[pick], j[pick]
         first_better = lab[i] > lab[j]
         hi = np.where(first_better, i, j)
@@ -97,9 +115,10 @@ def weighted_ranknet_loss(s_preferred: torch.Tensor, s_other: torch.Tensor, weig
 
 
 def delta_ndcg_weights(scores: torch.Tensor, labels: torch.Tensor, pairs: torch.Tensor, k: int = 10) -> torch.Tensor:
-    """|delta nDCG@k| of swapping each pair, from the current scores. No gradient.
+    """|delta nDCG| of swapping each pair, from the current scores. No gradient.
 
-    Gain is 2^label - 1, discount 1/log2(1 + rank), divided by the query's ideal DCG@k.
+    Gain is 2^label - 1 and discount 1/log2(1 + rank) at every rank (not cut at k).
+    The change is divided by the query's ideal DCG@k.
     """
     with torch.no_grad():
         n = scores.shape[0]
@@ -114,37 +133,6 @@ def delta_ndcg_weights(scores: torch.Tensor, labels: torch.Tensor, pairs: torch.
             return torch.zeros(pairs.shape[0], dtype=torch.float32)
         i, j = pairs[:, 0], pairs[:, 1]
         return ((gain[i] - gain[j]).abs() * (disc[i] - disc[j]).abs() / idcg).to(torch.float32)
-
-
-def make_pairs_gain(qids, labels, pairs_per_query: int, rng: np.random.RandomState) -> np.ndarray:
-    """Like make_pairs, but a capped sample is drawn with probability proportional to |Δgain|.
-
-    Gain is 2^label - 1. Unequal integer labels have unequal gains, so every legal pair stays eligible.
-    """
-    labels = np.asarray(labels)
-    out = []
-    for rows in _query_rows(qids):
-        if len(rows) < 2:
-            continue
-        lab = labels[rows]
-        i, j = np.triu_indices(len(rows), k=1)
-        keep = lab[i] != lab[j]
-        i, j = i[keep], j[keep]
-        if len(i) == 0:
-            continue
-        if len(i) > pairs_per_query:
-            gain = np.power(2.0, lab.astype(np.float64)) - 1.0
-            w = np.abs(gain[i] - gain[j])
-            w = w / w.sum()
-            pick = rng.choice(len(i), size=pairs_per_query, replace=False, p=w)
-            i, j = i[pick], j[pick]
-        first_better = lab[i] > lab[j]
-        hi = np.where(first_better, i, j)
-        lo = np.where(first_better, j, i)
-        out.append(np.stack([rows[hi], rows[lo]], axis=1))
-    if not out:
-        return np.zeros((0, 2), dtype=np.int64)
-    return np.concatenate(out).astype(np.int64)
 
 
 def lambdarank_query_step(network: nn.Module, optimizer, Xt: torch.Tensor, yt: torch.Tensor,
@@ -245,7 +233,7 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
                     network, optimizer, Xt, yt, batch, pairs_per_query, rng,
                     pair_fn=pair_fn, sigma=ranknet_sigma))
         elif kind == "pairwise":
-            pairs = make_pairs(q, y, pairs_per_query, rng)
+            pairs = pair_fn(q, y, pairs_per_query, rng)
             pairs = pairs[rng.permutation(len(pairs))]
             for b in range(0, len(pairs), batch_size):
                 pb = torch.from_numpy(pairs[b:b + batch_size])

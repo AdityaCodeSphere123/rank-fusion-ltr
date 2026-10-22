@@ -17,29 +17,27 @@ import time
 
 import numpy as np
 
-from scripts.data_cache import load_xyq
+from scripts.data_cache import load_xyq, resolve
 from scripts.lambdamart_utils import default_params, fit, ndcg10
 from submission.ranking import within_query_ranks, within_query_z
 
 
-def _resolve(path, name):
-    return os.path.join(path, name) if os.path.isdir(path) else path
+def _query_spans(q):
+    """(start, end) row ranges of each contiguous query."""
+    starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
+    return list(zip(starts, np.r_[starts[1:], len(q)]))
 
 
 def _query_ranks(X, q):
     ranks = np.empty(np.shape(X), dtype=np.float64)
-    starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
-    ends = np.r_[starts[1:], len(q)]
-    for a, b in zip(starts, ends):
+    for a, b in _query_spans(q):
         ranks[a:b] = within_query_ranks(np.asarray(X[a:b], dtype=np.float64))
     return ranks.astype(np.float32)
 
 
 def _query_z(X, q):
     out = np.empty(np.shape(X), dtype=np.float32)
-    starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
-    ends = np.r_[starts[1:], len(q)]
-    for a, b in zip(starts, ends):
+    for a, b in _query_spans(q):
         out[a:b] = within_query_z(np.asarray(X[a:b], dtype=np.float64))
     return out
 
@@ -82,10 +80,8 @@ def main():
                     help="append a per-feature z-scored copy of the rows")
     ap.add_argument("--query-scale", action="store_true",
                     help="append a copy where every query is rescaled by its own per-feature log-normal draw")
-    ap.add_argument("--permute-view", action="store_true",
-                    help="append a copy with the five fields inside each group shuffled")
     ap.add_argument("--permute-per-query", action="store_true",
-                    help="draw a fresh field shuffle for every query (implies --permute-view)")
+                    help="append a copy where the five fields inside each feature group are shuffled per query")
     ap.add_argument("--cell-view", action="store_true",
                     help="append a copy with --cell-rate of feature cells set to 0")
     ap.add_argument("--cell-rate", type=float, default=0.10,
@@ -104,9 +100,9 @@ def main():
     ap.add_argument("--init-model", default=None, help="keep boosting from this LightGBM model file")
     args = ap.parse_args()
 
-    X, y, q = load_xyq(_resolve(args.train, "train.txt"))
+    X, y, q = load_xyq(resolve(args.train, "train.txt"))
     q = np.asarray(q, dtype=object)
-    dev_path = _resolve(args.dev, "vali.txt") if args.dev else _resolve(args.train, "vali.txt")
+    dev_path = resolve(args.dev, "vali.txt") if args.dev else resolve(args.train, "vali.txt")
     dev = None
     if os.path.isfile(dev_path):
         Xd, yd, qd = load_xyq(dev_path)
@@ -122,123 +118,77 @@ def main():
     scales = [float(s) for s in str(args.feature_noise).split(",") if float(s) > 0]
     base_codes = _run_codes(np.asarray(q))
     n_queries = int(base_codes[-1]) + 1
-    # Each copy gets new query ids so a percentile never mixes two copies of one query
+    # Each copy is one function of the raw rows. Copies get new query ids so a percentile never
+    # mixes two copies of one query. Every copy has its own fixed seed.
     builders = []
     if args.clean_copies > 0:
-        builders.append(("clean", lambda raw, _f=None: raw))
+        builders.append(lambda raw: raw)
     if scales:
         std = X.std(axis=0).astype(np.float32)
         for i, scale in enumerate(scales):
-            builders.append(("noise", lambda raw, s=scale, sd=std, i=i: (
-                raw + s * sd * np.random.RandomState(args.seed + i).randn(*raw.shape).astype(np.float32)
-            ).astype(np.float32)))
-    for i in range(1, max(0, args.clean_copies)):
-        builders.append(("clean", lambda raw: raw))
+            builders.append(lambda raw, s=scale, i=i: (
+                raw + s * std * np.random.RandomState(args.seed + i).randn(*raw.shape).astype(np.float32)))
+    for _ in range(1, args.clean_copies):
+        builders.append(lambda raw: raw)
     if args.log_view:
-        builders.append(("log", lambda raw: (np.sign(raw) * np.log1p(np.abs(raw))).astype(np.float32)))
+        builders.append(lambda raw: np.sign(raw) * np.log1p(np.abs(raw)))
     if args.z_view:
-        builders.append(("z", lambda raw: ((raw - raw.mean(0)) / np.clip(raw.std(0), 1e-6, None)).astype(np.float32)))
+        builders.append(lambda raw: (raw - raw.mean(0)) / np.clip(raw.std(0), 1e-6, None))
     if args.query_scale:
-        q_scale = q
-
-        def _qscale(raw, q=q_scale, seed=args.seed):
-            raw = np.asarray(raw, dtype=np.float32)
+        def _qscale(raw):
+            rng = np.random.RandomState(args.seed + 17)
+            spans = _query_spans(q)
+            scale = np.exp(rng.normal(0.0, 1.0, size=(len(spans), raw.shape[1]))).astype(np.float32)
             out = np.empty_like(raw)
-            rng = np.random.RandomState(seed + 17)
-            starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
-            ends = np.r_[starts[1:], len(q)]
-            scales = np.exp(rng.normal(0.0, 1.0, size=(len(starts), raw.shape[1]))).astype(np.float32)
-            for i, (a, b) in enumerate(zip(starts, ends)):
-                out[a:b] = raw[a:b] * scales[i]
+            for i, (a, b) in enumerate(spans):
+                out[a:b] = raw[a:b] * scale[i]
             return out
-
-        builders.append(("qscale", _qscale))
+        builders.append(_qscale)
     if args.permute_per_query:
-        args.permute_view = True
-    if args.permute_view:
-        per_query = args.permute_per_query
-        q_perm = q
-
-        def _permute(raw, seed=args.seed, per_query=per_query, q=q_perm):
-            raw = np.asarray(raw, dtype=np.float32)
-            out = np.array(raw, copy=True)
-            rng = np.random.RandomState(seed + 23)
-            if not per_query:
+        def _permute(raw):
+            rng = np.random.RandomState(args.seed + 23)
+            out = raw.copy()
+            for a, b in _query_spans(q):
                 for g in range(25):
-                    out[:, 5 * g:5 * g + 5] = raw[:, 5 * g + rng.permutation(5)]
-                return out
-            starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
-            ends = np.r_[starts[1:], len(q)]
-            for a, b in zip(starts, ends):
-                block = out[a:b]
-                src = raw[a:b]
-                for g in range(25):
-                    block[:, 5 * g:5 * g + 5] = src[:, 5 * g + rng.permutation(5)]
+                    out[a:b, 5 * g:5 * g + 5] = raw[a:b, 5 * g + rng.permutation(5)]
             return out
-
-        builders.append(("permute", _permute))
+        builders.append(_permute)
     if args.cell_view:
-        rate = float(args.cell_rate)
-
-        def _cell(raw, seed=args.seed, rate=rate):
-            raw = np.asarray(raw, dtype=np.float32)
-            out = np.array(raw, copy=True)
-            rng = np.random.RandomState(seed + 29)
-            out[rng.rand(*out.shape) < rate] = 0
+        def _cell(raw):
+            out = raw.copy()
+            out[np.random.RandomState(args.seed + 29).rand(*out.shape) < args.cell_rate] = 0
             return out
-
-        builders.append(("cell", _cell))
+        builders.append(_cell)
     if args.cell_missing:
-        rate = float(args.cell_rate)
-
-        def _missing(raw, seed=args.seed, rate=rate):
-            raw = np.asarray(raw, dtype=np.float32)
-            out = np.array(raw, dtype=np.float32, copy=True)
-            rng = np.random.RandomState(seed + 37)
-            out[rng.rand(*out.shape) < rate] = np.nan
+        def _missing(raw):
+            out = raw.copy()
+            out[np.random.RandomState(args.seed + 37).rand(*out.shape) < args.cell_rate] = np.nan
             return out
-
-        builders.append(("missing", _missing))
+        builders.append(_missing)
     if args.drop_field_view:
-        q_drop = q
+        n_drop = max(1, min(4, args.drop_field_count))
 
-        n_drop = max(1, min(4, int(args.drop_field_count)))
-
-        def _drop_field(raw, seed=args.seed, q=q_drop, n_drop=n_drop):
-            raw = np.asarray(raw, dtype=np.float32)
-            out = np.array(raw, copy=True)
-            rng = np.random.RandomState(seed + 41)
-            starts = np.flatnonzero(np.r_[True, q[1:] != q[:-1]])
-            ends = np.r_[starts[1:], len(q)]
-            for a, b in zip(starts, ends):
+        def _drop_field(raw):
+            rng = np.random.RandomState(args.seed + 41)
+            out = raw.copy()
+            for a, b in _query_spans(q):
                 for field in rng.choice(5, size=n_drop, replace=False):
                     out[a:b, int(field):125:5] = 0
             return out
-
-        builders.append(("dropfield", _drop_field))
+        builders.append(_drop_field)
     if args.mul_view > 0:
-        mul_scale = float(args.mul_view)
-
-        def _mul(raw, s=mul_scale, seed=args.seed):
-            raw = np.asarray(raw, dtype=np.float32)
-            rng = np.random.RandomState(seed + 31)
-            return (raw * (1.0 + s * rng.randn(*raw.shape).astype(np.float32))).astype(np.float32)
-
-        builders.append(("mul", _mul))
-    want_ranks = (args.query_z or args.log_view or args.z_view or args.query_scale or args.permute_view
-                  or args.cell_view or args.cell_missing or args.drop_field_view or args.mul_view > 0)
+        builders.append(lambda raw: raw * (
+            1.0 + args.mul_view * np.random.RandomState(args.seed + 31).randn(*raw.shape).astype(np.float32)))
+    want_ranks = args.query_z
     if len(builders) > 1 or want_ranks:
         # fill one big array copy by copy so all copies are never in memory twice
-        probe_q = base_codes
-        probe = _expand(X[:1], probe_q[:1]) if want_ranks else np.asarray(X[:1], dtype=np.float32)
-        width = probe.shape[1]
-        del probe
+        width = X.shape[1] * (3 if want_ranks else 1)
         gib = n_clean * len(builders) * width * 4 / 1024**3
         print(f"stacking {len(builders)} views, {width} columns, {gib:.1f} GiB", flush=True)
         big = np.empty((n_clean * len(builders), width), dtype=np.float32)
         big_y = np.empty(n_clean * len(builders), dtype=y.dtype)
         big_q = np.empty(n_clean * len(builders), dtype=np.int32)
-        for i, (_, build) in enumerate(builders):
+        for i, build in enumerate(builders):
             view = np.asarray(build(X), dtype=np.float32)
             vq = base_codes + i * n_queries
             block = _expand(view, vq) if want_ranks else view

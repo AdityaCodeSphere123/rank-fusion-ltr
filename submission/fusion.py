@@ -1,4 +1,4 @@
-"""Rank fusion over the named base-ranker scores. Higher is better on every channel.
+"""Rank fusion over the named base ranker scores. Higher is better on every channel.
 Ties keep dict insertion order (the candidate order).
 """
 from typing import Dict, Iterable, List, Optional
@@ -35,21 +35,18 @@ def minmax_normalize(values: Dict[str, float]) -> Dict[str, float]:
     return {d: (v - lo) / (hi - lo) for d, v in values.items()}
 
 
-def combsum_scores(base_scores: Dict[str, Dict[str, float]],
-                   channels: Optional[Iterable[str]] = None) -> Dict[str, float]:
+def combsum_scores(base_scores: Dict[str, Dict[str, float]], channels: Optional[Iterable[str]] = None) -> Dict[str, float]:
     """Sum of per-channel min-max scores over the candidate pool."""
     normalised = _normalised_channels(base_scores, channels)
     return {d: sum(norm[d] for norm in normalised.values()) for d in base_scores}
 
 
-def _normalised_channels(base_scores: Dict[str, Dict[str, float]],
-                         channels: Optional[Iterable[str]]) -> Dict[str, Dict[str, float]]:
+def _normalised_channels(base_scores: Dict[str, Dict[str, float]], channels: Optional[Iterable[str]]) -> Dict[str, Dict[str, float]]:
     return {ch: minmax_normalize({d: s[ch] for d, s in base_scores.items()})
             for ch in _channels(base_scores, channels)}
 
 
-def combmnz_scores(base_scores: Dict[str, Dict[str, float]],
-                   channels: Optional[Iterable[str]] = None) -> Dict[str, float]:
+def combmnz_scores(base_scores: Dict[str, Dict[str, float]], channels: Optional[Iterable[str]] = None) -> Dict[str, float]:
     """CombSUM times the number of channels with normalised score > 0.
 
     Every candidate has a raw score on every channel, so "appears in the list"

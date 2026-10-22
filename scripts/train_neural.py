@@ -92,15 +92,10 @@ def main():
         secs = time.perf_counter() - t0
         scorer = make_scorer(net, std)
         best = max(hist, key=lambda h: h["dev_ndcg@10"])
-        summary = {"kind": kind, "args": vars(args), "epochs_run": len(hist), "best_epoch": best["epoch"],
-                   "monitor_ndcg@10": best["dev_ndcg@10"], "dev_ndcg@10": dev_ndcg(scorer, *dev),
-                   "train_seconds": round(secs, 1), "history": hist}
-        if holdout is not None:
-            summary["holdout_ndcg@10"] = dev_ndcg(scorer, *holdout)
         msg = (f"{kind}: epochs run = {len(hist)} (best {best['epoch']}), monitor nDCG@10 = {best['dev_ndcg@10']:.4f}, "
-               f"DEV nDCG@10 = {summary['dev_ndcg@10']:.4f}")
+               f"DEV nDCG@10 = {dev_ndcg(scorer, *dev):.4f}")
         if holdout is not None:
-            msg += f", TRAIN-holdout nDCG@10 = {summary['holdout_ndcg@10']:.4f}"
+            msg += f", TRAIN-holdout nDCG@10 = {dev_ndcg(scorer, *holdout):.4f}"
         path = os.path.join(args.out_dir, f"{kind}_model.pt")
         save_scorer(path, net, std, args.hidden)
         print(msg + f" -> {path}  ({secs:.0f}s)", flush=True)

@@ -21,15 +21,14 @@ rsync -a \
   --exclude 'data/train/' \
   --exclude 'data/dev/' \
   --exclude 'data/ltr_data/' \
-  --exclude 'a3-rankfusion-LTR.pdf' \
-  --exclude 'a3-rankfusion-LTR.tex' \
   --exclude 'pack_submission.sh' \
   --exclude 'submission/model_*.txt' \
-  --exclude 'Decision.md' \
   --exclude 'experiments/' \
   --exclude 'runs/' \
   --include 'scripts/cv_lambdamart.py' \
+  --include 'scripts/cv_sweep.py' \
   --include 'scripts/data_cache.py' \
+  --include 'scripts/fusion_eval.py' \
   --include 'scripts/lambdamart_utils.py' \
   --include 'scripts/make_toy_data.py' \
   --include 'scripts/prepare_mslr.py' \

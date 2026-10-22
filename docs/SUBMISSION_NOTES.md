@@ -1,4 +1,4 @@
-# Submission notes (required, Sections 8 and 10) -- copy to your repo root README
+# Submission notes
 
 ## Training-data declaration
 | model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
@@ -11,10 +11,10 @@
 DEV is inside the LambdaMART fit, so its DEV score of 0.7079 is an in-training score.
 
 ## Fusion method and why
-`fuse_candidates` is CombSUM of per-query min-max scores over BM25 whole document, BM25 title and LMIR.DIR. On all 6,000 TRAIN queries RRF (best c = 150, 0.2937) scored below CombSUM (0.2961) and CombMNZ (0.2958). A channel weight grid on TRAIN set LMIR.JM to 0 so it is dropped, and the three-channel sum scores 0.3000 on TRAIN. DEV: nDCG@10 0.3105, MAP@10 0.1302.
+`fuse_candidates` is CombSUM of per-query min-max scores over BM25 whole document, BM25 title and LMIR.DIR. On all 6,000 TRAIN queries RRF (best c = 150, 0.2937) scored below CombSUM (0.2961) and CombMNZ (0.2958). A channel weight grid on TRAIN set LMIR.JM to 0 so it is dropped, and the three-channel sum scores 0.3000 on TRAIN. DEV: nDCG@10 0.3105, MAP@10 0.1302. `python scripts/fusion_eval.py` prints all of these numbers.
 
 ## LambdaMART hyperparameters and how chosen (cite your CV table)
-Grouped 5-fold CV on TRAIN only, with no early stopping on the reported fold:
+Grouped 5-fold CV on TRAIN only, with no early stopping on the reported fold. Tree counts 100, 200, 300, 500, 750, 1000, 1500 and 2000 were swept. `python scripts/cv_sweep.py --grid leaves` makes the first four rows. `--grid lr` reruns the last three; their other settings (L2 1.0, bagging 0.8) are the script defaults and were not saved with the original results:
 
 | lr / leaves / min_data_in_leaf / feature_fraction | best trees | CV val nDCG@10 | train | val/train |
 |---|---|---|---|---|
@@ -28,7 +28,7 @@ Grouped 5-fold CV on TRAIN only, with no early stopping on the reported fold:
 
 Validation stays near 0.474 to 0.477 for every shape while the train score keeps rising, so extra capacity mostly memorizes.
 
-Feature engineering: each query's 136 features are joined by their percentile and their z-score inside the query, giving 408 columns. `rerank_with_ltr` rebuilds them at scoring time. Both stay the same when a feature is rescaled. Training also stacks changed copies of the rows: Gaussian and multiplicative noise, log1p, cells set to 0 or missing, fields shuffled or zeroed per query, and per-query rescaling.
+Feature engineering: each of the 136 features is joined by its percentile and its z-score inside the query, giving 408 columns. `rerank_with_ltr` rebuilds them at scoring time. Both stay the same when a feature is rescaled. Training also stacks changed copies of the rows: Gaussian and multiplicative noise, log1p, cells set to 0 or missing, fields shuffled or zeroed per query, and per-query rescaling.
 
 Shipped model: `num_leaves=127`, `feature_fraction=0.5`, `lambda_l2=0.1`, `bagging_fraction=0.9` and 2835 trees. The learning rate falls from 0.05 to 0.015 over the stages below and `min_data_in_leaf` is 20 or 40. Each stage continues from the file before it:
 
@@ -109,9 +109,17 @@ python scripts/train_neural.py --kind pairwise --train data/train --dev data/dev
   --out-dir submission
 ```
 
-Dev nDCG@10 of the three models: pointwise 0.4225, pairwise 0.4550 and LambdaMART 0.7079 (in-training).
+Both commands early-stop on a fixed tenth of the TRAIN queries (`grouped_kfold(k=10, seed=0)`, fold 0), so DEV is only scored at the end. The shipped `pointwise_model.pt` was trained on 17 Oct with an earlier version of the script. Its saved standardizer matches this same 9/10 of TRAIN exactly, but running the command above today gives DEV 0.4160 and not 0.4225. Running the pairwise command again gives DEV between 0.452 and 0.455. The first epochs are identical, and after that small floating point differences between runs change the result a little.
 
-`recipe.py` (Track C1) sets leaves, leaf size, column sampling and L2 from the data size. It averages up to six LambdaMART models. Half see the raw features and half also see the within-query percentile and z-score columns, and their trees use the size rule, twice the leaves, half the leaves or fewer columns. Each model early-stops on the benchmark's vali and is then refit on train plus vali. The number of models comes from a size-based time estimate so the run fits in 20 minutes and 8 GB and depends only on the data and the seed.
+| model | DEV nDCG@10 |
+|---|---|
+| pointwise (shipped) | 0.4225 |
+| pairwise (shipped) | 0.4550 |
+| LambdaMART (shipped, DEV was in training) | 0.7079 |
+
+The 0.7079 is not a fair comparison because DEV rows were fit. A fairer LambdaMART estimate is the CV validation score of the plain settings above, about 0.477 on unseen TRAIN queries, which is still above both neural models.
+
+`recipe.py` (Track C1) sets leaves, leaf size, column sampling and L2 from the data size. It averages up to six LambdaMART models. Half see the raw features and half also see the within-query percentile and z-score columns, and their trees use the size rule, twice the leaves, half the leaves or fewer columns. Each model early-stops on the benchmark's vali and is then refit on train plus vali. The number of models comes from a size-based time estimate so the run fits in 20 minutes and 8 GB and depends only on the data and the seed. On full MSLR TRAIN plus DEV (about 958,000 rows, 136 features) a full run took 313 seconds and peaked at 4.0 GB of memory with 4 threads on a Mac.
 
 ## Final configuration: what you traded off between dev accuracy and generalization
 We gave up some clean accuracy for robustness. Training on DEV and on corrupted copies lifts DEV to 0.7079, but that number is in-training and says little about unseen queries. The CV table shows validation barely moves with more leaves or trees, so the gain we aimed for is stability on the hidden C2 versions. The corrupted copies and the scale-free within-query columns keep the ranking steady when features are noisy, missing or rescaled. For C1 we used rules instead of constants and averaged several tree shapes, so no single setting tuned on MSLR decides the result on a dataset we cannot see.
