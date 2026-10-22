@@ -2,12 +2,17 @@
 
 Writes a LightGBM LambdaMART model. Leaf size, column sampling, L2 and the
 round budget follow the training-set shape, not MSLR constants. Values above
-1e30 are stored as missing. Vali is used only to early-stop nDCG@10; the model is then refit
+1e30 are stored as missing. Each query is fit on its raw features, their
+within-query percentiles, and their within-query z-scores; rerank_with_ltr
+rebuilds those columns when the saved width is three times the file width.
+Vali is used only to early-stop nDCG@10; the model is then refit
 on train+vali when the size-based cost estimate fits the time budget.
 """
 import time
 
 import numpy as np
+
+from submission.ranking import sanitize, within_query_ranks, within_query_z
 
 TIME_BUDGET_S = 15 * 60
 NUM_THREADS = 4
@@ -68,6 +73,22 @@ def _to_matrix(blocks, labels, qids, width: int):
         X, labels, qnum = X[order], labels[order], qnum[order]
     sizes = np.bincount(qnum, minlength=len(first)).tolist()
     return X, labels, sizes
+
+
+def _with_query_views(X, sizes):
+    """Stack raw features, within-query percentiles, and within-query z-scores.
+
+    Same construction as ranking._feature_matrix when the model is three times
+    as wide as the file. One query at a time, so the statistics do not cross queries.
+    """
+    if not sizes:
+        return X
+    blocks, start = [], 0
+    for n in sizes:
+        block = sanitize(X[start:start + n])
+        blocks.append(np.hstack([block, within_query_ranks(block), within_query_z(block)]).astype(np.float32))
+        start += n
+    return np.vstack(blocks)
 
 
 def load_pair(train_path: str, vali_path: str):
@@ -179,5 +200,6 @@ def fit_arrays(X, y, g, Xv, yv, gv, seed: int = 0, deadline: float = None, refit
 def train(train_path: str, vali_path: str, out_model_path: str, seed: int = 0) -> None:
     t0 = time.perf_counter()
     (X, y, g), (Xv, yv, gv) = load_pair(train_path, vali_path)
+    X, Xv = _with_query_views(X, g), _with_query_views(Xv, gv)
     booster, n_iter, _info = fit_arrays(X, y, g, Xv, yv, gv, seed=seed, deadline=t0 + TIME_BUDGET_S)
     booster.save_model(out_model_path, num_iteration=n_iter)
