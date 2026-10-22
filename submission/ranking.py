@@ -1,20 +1,12 @@
-"""Competition entry.
+"""Competition entry for Assignment 3.
 
-fuse_candidates: unweighted CombSUM of BM25 (document and title) and LMIR.DIR.
-LMIR.JM is dropped; on TRAIN every channel-weight grid set it to 0.
+fuse_candidates adds up the min-max scores of BM25 on the whole document,
+BM25 on the title and LMIR.DIR. LMIR.JM is left out because every weight search
+on TRAIN gave it a weight of 0.
 
-rerank_with_ltr: the LightGBM model loaded by prepare(). A recipe.py model
-names its columns raw_i, pct_i, wqz_i; its raw width D is read from those
-names, the candidate rows are padded or truncated to D (a sparse file need
-not mention the last feature), and the percentile and z-score views are
-rebuilt. For an unnamed model, twice the candidate width is raw features
-plus within-query percentiles, and width 3D also appends a within-query
-z-score of each raw feature. Any other width is padded or truncated and
-scored on the raw vectors.
-
-prepare() only loads the artifact and raises if it is missing. Both rankers
-return at most k (doc_id, score) pairs, best first, ids drawn only from the
-candidate list, no duplicates. Ties keep candidate order.
+rerank_with_ltr scores the candidates with the LightGBM model loaded by
+prepare(). Our models see each raw feature plus its percentile and z-score
+inside the query, so we rebuild those columns here before scoring.
 """
 import os
 from typing import Dict, List, Tuple
@@ -43,7 +35,7 @@ def prepare(model_path: str) -> None:
 
 
 def _named_raw_width(names: List[str]):
-    """D when the columns are raw_0..raw_{D-1}, pct_0.., wqz_0.. in that order, else None."""
+    """Raw feature count of a recipe.py model, read from its column names. None for other models."""
     if not names or len(names) % 3:
         return None
     d = len(names) // 3
@@ -66,10 +58,7 @@ def fuse_candidates(qid: str, candidate_doc_ids: List[str], base_scores: Dict[st
 
 
 def sanitize(X: np.ndarray) -> np.ndarray:
-    """Replace non-finite values and values above 1e30 with NaN.
-
-    LightGBM treats NaN as missing. Finite values are left unchanged.
-    """
+    """Turn inf, nan and huge values above 1e30 into NaN. LightGBM treats NaN as missing."""
     X = np.asarray(X, dtype=np.float64)
     bad = ~np.isfinite(X) | (np.abs(X) > 1e30)
     if not bad.any():
@@ -80,12 +69,11 @@ def sanitize(X: np.ndarray) -> np.ndarray:
 
 
 def within_query_ranks(X: np.ndarray) -> np.ndarray:
-    """Within-query average-tie percentile of each feature, in [0, 1].
+    """Percentile of each feature inside one query, from 0 to 1.
 
-    One document, and any feature that is constant in the query, is 0. Tied
-    values share a percentile, so document order does not matter. A monotone
-    map of one feature leaves its percentile unchanged. Non-finite entries
-    tie at the bottom of that feature.
+    Equal values share the same percentile so the order of documents does not
+    matter. A constant feature or a one document query gives 0. Missing values
+    count as the smallest value.
     """
     X = np.asarray(X, dtype=np.float64)
     bad = ~np.isfinite(X)
@@ -114,11 +102,10 @@ def within_query_ranks(X: np.ndarray) -> np.ndarray:
 
 
 def within_query_z(X: np.ndarray) -> np.ndarray:
-    """Within-query z-score of each feature.
+    """Z-score of each feature inside one query.
 
-    Invariant to a positive scale and shift applied to one feature, including
-    a different scale on every query. A constant feature, and a one-document
-    query, is 0. Non-finite inputs do not set the mean or the scale.
+    It does not change if a feature is shifted or rescaled. A constant feature or
+    a one document query gives 0 and missing values are ignored.
     """
     X = np.asarray(X, dtype=np.float64)
     mu = np.nanmean(X, axis=0)
@@ -130,33 +117,22 @@ def within_query_z(X: np.ndarray) -> np.ndarray:
     return out
 
 
-def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int,
-                    raw_width: int = None) -> np.ndarray:
+def _feature_matrix(ids: List[str], features: Dict[str, List[float]]) -> np.ndarray:
     rows = [np.asarray(features[d], dtype=np.float64).ravel() for d in ids]
-    if raw_width is not None:
-        X = np.zeros((len(rows), raw_width), dtype=np.float64)
-        for i, r in enumerate(rows):
-            n = min(raw_width, r.shape[0])
-            X[i, :n] = r[:n]
-        X = sanitize(X)
-        return np.hstack([X, within_query_ranks(X), within_query_z(X)])
-    observed = max((r.shape[0] for r in rows), default=0)
-    X = np.zeros((len(rows), observed), dtype=np.float64)
+    d = _RAW_WIDTH
+    if d is None:
+        # The MSLR model has unnamed columns. It has three columns per input feature and
+        # a plain model has one
+        observed = max((r.shape[0] for r in rows), default=0)
+        d = observed if _N_FEATURES == 3 * observed else _N_FEATURES
+    # A sparse file may never mention its last features, so pad or cut every row to d
+    X = np.zeros((len(rows), d), dtype=np.float64)
     for i, r in enumerate(rows):
-        n = min(observed, r.shape[0])
+        n = min(d, r.shape[0])
         X[i, :n] = r[:n]
     X = sanitize(X)
-    if observed > 0 and width == 3 * observed:
+    if _N_FEATURES == 3 * d:
         X = np.hstack([X, within_query_ranks(X), within_query_z(X)])
-    elif observed > 0 and width == 2 * observed:
-        X = np.hstack([X, within_query_ranks(X)])
-    elif width != observed:
-        if width > observed:
-            padded = np.zeros((len(rows), width), dtype=np.float64)
-            padded[:, :observed] = X
-            X = padded
-        else:
-            X = X[:, :width]
     return X
 
 
@@ -167,7 +143,8 @@ def rerank_with_ltr(qid: str, candidate_doc_ids: List[str], features: Dict[str, 
     ids = _unique(candidate_doc_ids)
     if not ids:
         return []
-    X = _feature_matrix(ids, features, _N_FEATURES, _RAW_WIDTH)
-    preds = _MODEL.predict(X, num_threads=1)
+    X = _feature_matrix(ids, features)
+    # every row is scored on its own so more threads only make big queries faster
+    preds = _MODEL.predict(X, num_threads=4 if len(ids) > 200 else 1)
     order = np.argsort(-preds, kind="stable")
     return [(ids[i], float(preds[i])) for i in order[:k]]

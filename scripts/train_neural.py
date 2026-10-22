@@ -1,21 +1,10 @@
-"""Train the pointwise and/or pairwise (RankNet) MLP scorers and save pointwise_model.pt / pairwise_model.pt.
+"""Train the pointwise and pairwise MLP scorers and save pointwise_model.pt and pairwise_model.pt.
 
-    python scripts/train_neural.py --kind both --train data/train --dev data/dev --out-dir submission
+--monitor train-slice keeps DEV unseen. One tenth of the TRAIN queries is held out for early
+stopping and DEV is only scored once at the end. --holdout-fold holds out a second tenth that
+we used to compare settings without looking at DEV.
 
-Calls train_model() from submission/pointwise_pairwise.py -- it will raise NotImplementedError until you have
-written the TODOs. Early stopping on --dev counts as tuning against dev (it makes your dev score optimistic); declare that in your submission notes (Section 10).
-
---monitor train-slice keeps DEV unseen: one query fold of TRAIN (grouped_kfold, --monitor-folds folds, fold 0)
-is held out as the early-stopping monitor and the model trains on the remaining TRAIN queries; --dev is then
-only scored once, after training, as a reported number. --holdout-fold additionally removes a second TRAIN
-fold from training and reports it, for choosing between settings without touching DEV.
-
-Submitted models (see docs/SUBMISSION_NOTES.md):
-    python scripts/train_neural.py --kind pointwise --train data/train --dev data/dev --monitor train-slice \
-        --hidden 256 256 --out-dir submission
-    python scripts/train_neural.py --kind pairwise --train data/train --dev data/dev --monitor train-slice \
-        --pair-weighting delta_ndcg --hidden 256 256 256 --queries-per-batch 64 --pairs-per-query 2000 \
-        --lr 5e-4 --lr-decay 0.95 --scale winsor --epochs 40 --out-dir submission
+The commands for the shipped models are in docs/SUBMISSION_NOTES.md.
 """
 import os
 import sys
@@ -23,7 +12,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import argparse
-import json
 import time
 
 import numpy as np
@@ -32,10 +20,6 @@ import torch
 from harness.cv import grouped_kfold
 from scripts.data_cache import load_xyq, resolve
 from submission.pointwise_pairwise import dev_ndcg, make_scorer, save_scorer, train_model
-
-
-def _resolve(path, name):
-    return resolve(path, name)
 
 
 def main():
@@ -69,13 +53,11 @@ def main():
                     help="append the dev split to the training rows. Only with --monitor train-slice; "
                          "the monitor and the holdout stay query-disjoint slices of TRAIN")
     ap.add_argument("--threads", type=int, default=4)
-    ap.add_argument("--no-save", action="store_true", help="experiment only: do not write the .pt artifact")
-    ap.add_argument("--log", default=None, help="append a JSON summary line to this file")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
 
-    X, y, q = load_xyq(_resolve(args.train, "train.txt"))
-    dev = load_xyq(_resolve(args.dev, "vali.txt"))
+    X, y, q = load_xyq(resolve(args.train, "train.txt"))
+    dev = load_xyq(resolve(args.dev, "vali.txt"))
     holdout = None
     if args.monitor == "train-slice":
         folds = grouped_kfold(q, k=args.monitor_folds, seed=args.seed)
@@ -119,14 +101,9 @@ def main():
                f"DEV nDCG@10 = {summary['dev_ndcg@10']:.4f}")
         if holdout is not None:
             msg += f", TRAIN-holdout nDCG@10 = {summary['holdout_ndcg@10']:.4f}"
-        if not args.no_save:
-            path = os.path.join(args.out_dir, f"{kind}_model.pt")
-            save_scorer(path, net, std, args.hidden)
-            msg += f" -> {path}"
-        print(msg + f"  ({secs:.0f}s)", flush=True)
-        if args.log:
-            with open(args.log, "a", encoding="utf-8") as f:
-                f.write(json.dumps(summary) + "\n")
+        path = os.path.join(args.out_dir, f"{kind}_model.pt")
+        save_scorer(path, net, std, args.hidden)
+        print(msg + f" -> {path}  ({secs:.0f}s)", flush=True)
 
 
 if __name__ == "__main__":

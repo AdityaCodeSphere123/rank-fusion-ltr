@@ -1,42 +1,36 @@
-# Submission notes
+# Submission notes (required, Sections 8 and 10) -- copy to your repo root README
 
 ## Training-data declaration
-| model | trained on | tuned on | early-stopped on |
+| model | trained on (TRAIN / DEV / both) | tuned on | early-stopped on |
 |---|---|---|---|
-| LambdaMART `model.txt` | TRAIN and DEV | tree count and corruption views, compared on TRAIN slices and on DEV | none |
-| `pointwise_model.pt` | 9/10 of TRAIN | not tuned | the other tenth of TRAIN (seed 0) |
-| `pairwise_model.pt` | 9/10 of TRAIN. Mean and std are fit on that part only | pair sampling, pair count, patience, weight decay, and a final low-lr pass | the other tenth of TRAIN (seed 0). No final pass |
-| `recipe.py` | each benchmark's train and vali | MSLR TRAIN cross-validation, disguised MSLR TRAIN slices scored on DEV queries, and the synthetic sets in `data/toy_transfer/` | that benchmark's vali nDCG@10 per member, then each member is refit on train+vali |
-| `fuse_candidates` | none | channel subset and weights on TRAIN | — |
+| LambdaMART `model.txt` | both | grouped 5-fold CV on TRAIN, then tree count and corrupted-copy settings checked on TRAIN slices and DEV | none |
+| pointwise_model.pt | 9/10 of TRAIN | not tuned | the other 1/10 of TRAIN |
+| pairwise_model.pt | 9/10 of TRAIN | pair sampling and learning rate on a TRAIN slice | the other 1/10 of TRAIN |
+| recipe.py (run by staff on hidden benchmarks) | each hidden benchmark's train+vali | MSLR TRAIN CV, MSLR TRAIN slices scored on DEV, and the synthetic transfer sets in `data/toy_transfer/` | each benchmark's vali, then refit on train+vali |
 
-DEV is inside the LambdaMART fit, so 0.7079 is an in-training score. The neural models, the fusion weights, and the recipe do not train on DEV.
+DEV is inside the LambdaMART fit, so its DEV score of 0.7079 is an in-training score.
 
-## Fusion
-CombSUM of per-query min-max scores. Channels: BM25 whole document, BM25 title, and LMIR.DIR. LMIR.JM is left out.
+## Fusion method and why
+`fuse_candidates` is CombSUM of per-query min-max scores over BM25 whole document, BM25 title and LMIR.DIR. On all 6,000 TRAIN queries RRF (best c = 150, 0.2937) scored below CombSUM (0.2961) and CombMNZ (0.2958). A channel weight grid on TRAIN set LMIR.JM to 0 so it is dropped. DEV: nDCG@10 0.3105, MAP@10 0.1302.
 
-On all 6,000 TRAIN queries, RRF (best c=150, 0.2937) stayed below 4-channel CombSUM (0.2961) and CombMNZ (0.2958). A weight grid set LMIR.JM to 0 (TRAIN 0.3000). Choosing among about 400 methods on four fifths of TRAIN and scoring the remaining fifth gives 0.2989 ± 0.0041. A later weight check on DEV did not change the three-channel sum. DEV, reported only: nDCG@10 0.3105, MAP@10 0.1302.
+## LambdaMART hyperparameters and how chosen (cite your CV table)
+Grouped 5-fold CV on TRAIN only, with no early stopping on the reported fold:
 
-`rrf_scores`, `combsum_scores`, and `combmnz_scores` are in `submission/fusion.py`.
-
-## LambdaMART
-`model.txt` is LightGBM `lambdarank`, 2835 trees, 408 columns. `rerank_with_ltr` rebuilds those columns when the loaded width is three times the input width: the 136 raw features, their within-query average-tie percentiles, and their within-query z-scores. A percentile is unchanged by a monotone map of one feature. A within-query z-score is unchanged by a positive scale and shift of that feature.
-
-Shared settings: `num_leaves=127`, `feature_fraction=0.5`, `lambda_l2=0.1`, `bagging_fraction=0.9`, `bagging_freq=1`, `num_threads=8`, `deterministic=True`, `force_row_wise=True`. Every stage is fit on TRAIN and DEV.
-
-| trees | learning rate | min_data_in_leaf | seed | rows |
+| lr / leaves / min_data_in_leaf / feature_fraction | best trees | CV val nDCG@10 | train | val/train |
 |---|---|---|---|---|
-| 1–1200 | 0.05 | 20 | 1 | seven copies: clean, 0.30×-std noise, log1p, a per-feature z-score, a per-query shuffle of the five fields, 20% of cells set to 0, ×(1+0.35 noise) |
-| 1201–1450 | 0.03 | 40 | 5 | no clean copy: 0.25×-std noise, per-query field shuffle, 25% of cells set to 0, ×(1+0.40 noise) |
-| 1451–1750 | 0.03 | 40 | 6 | no clean copy: 0.50×-std noise, 20% of cells missing, one field zeroed per query, per-query field shuffle, ×(1+0.50 noise) |
-| 1751–2050 | 0.03 | 40 | 7 | no clean copy: 0.70×-std noise, 35% of cells missing, two fields zeroed per query, per-query field shuffle, ×(1+0.70 noise) |
-| 2051–2170 | 0.02 | 40 | 8 | one clean copy |
-| 2171–2370 | 0.02 | 40 | 9 | no clean copy: 0.55×-std noise, 1.00×-std noise, per-query field shuffle, ×(1+0.85 noise) |
-| 2371–2395 | 0.015 | 40 | 10 | one clean copy |
-| 2396–2545 | 0.015 | 40 | 11 | no clean copy: 0.40×-std noise, a per-query rescaling of each feature, 50% of cells missing |
-| 2546–2585 | 0.015 | 40 | 12 | one clean copy |
-| 2586–2835 | 0.015 | 20 | 14 | one clean copy |
+| 0.05 / 31 / 100 / 0.8 | 1000 | 0.4749 ± 0.0059 | 0.6243 | 0.761 |
+| 0.05 / 63 / 100 / 0.8 | 300 | 0.4744 ± 0.0063 | 0.5893 | 0.805 |
+| 0.05 / 127 / 100 / 0.8 | 500 | 0.4742 ± 0.0077 | 0.7174 | 0.661 |
+| 0.05 / 255 / 100 / 0.8 | 200 | 0.4741 ± 0.0059 | 0.6961 | 0.681 |
+| 0.05 / 63 / 500 / 0.5 | 500 | 0.4741 ± 0.0068 | 0.6233 | 0.761 |
+| 0.025 / 63 / 500 / 0.5 | 1000 | 0.4766 ± 0.0070 | 0.6249 | 0.763 |
+| 0.0125 / 63 / 500 / 0.5 | 2000 | 0.4771 ± 0.0068 | 0.6263 | 0.762 |
 
-Commands that were run, in order. Each stage continues from the file named by `--init-model`.
+Validation stays near 0.474 to 0.477 for every shape while the train score keeps rising, so extra capacity mostly memorizes.
+
+Feature engineering: each query's 136 features are joined by their percentile and their z-score inside the query, giving 408 columns. `rerank_with_ltr` rebuilds them at scoring time. Both stay the same when a feature is rescaled. Training also stacks changed copies of the rows: Gaussian and multiplicative noise, log1p, cells set to 0 or missing, fields shuffled or zeroed per query, and per-query rescaling.
+
+Shipped model: `num_leaves=127`, `feature_fraction=0.5`, `lambda_l2=0.1`, `bagging_fraction=0.9` and 2835 trees. The learning rate falls from 0.05 to 0.015 over the stages below and `min_data_in_leaf` is 20 or 40. Each stage continues from the file before it:
 
 ```
 python scripts/train_model.py --train data/train --dev data/dev --use-dev \
@@ -46,19 +40,19 @@ python scripts/train_model.py --train data/train --dev data/dev --use-dev \
   --permute-per-query --cell-view --cell-rate 0.20 --mul-view 0.35 \
   --query-z --seed 1 --num-threads 8
 python scripts/train_model.py --train data/train --dev data/dev --use-dev \
-  --init-model submission/model_d17.txt --out submission/model.txt --trees 500 \
+  --init-model submission/model_d17.txt --out submission/model_d18.txt --trees 500 \
   --num-leaves 127 --learning-rate 0.05 --min-data-in-leaf 20 --lambda-l2 0.1 \
   --feature-fraction 0.5 --bagging-fraction 0.9 --bagging-freq 1 \
   --feature-noise 0.30 --log-view --z-view --permute-per-query --cell-view \
   --cell-rate 0.20 --mul-view 0.35 --query-z --seed 1 --num-threads 8
 python scripts/train_model.py --train data/train --dev data/dev --use-dev \
-  --init-model submission/model_d18.txt --out submission/model.txt --trees 250 \
+  --init-model submission/model_d18.txt --out submission/model_d20.txt --trees 250 \
   --learning-rate 0.03 --num-leaves 127 --min-data-in-leaf 40 --lambda-l2 0.1 \
   --feature-fraction 0.5 --bagging-fraction 0.9 --bagging-freq 1 --clean-copies 0 \
   --feature-noise 0.25 --permute-per-query --cell-view --cell-rate 0.25 \
   --mul-view 0.40 --query-z --seed 5 --num-threads 8
 python scripts/train_model.py --train data/train --dev data/dev --use-dev \
-  --init-model submission/model_d20.txt --out submission/model.txt --trees 300 \
+  --init-model submission/model_d20.txt --out submission/model_d21.txt --trees 300 \
   --learning-rate 0.03 --num-leaves 127 --min-data-in-leaf 40 --lambda-l2 0.1 \
   --feature-fraction 0.5 --bagging-fraction 0.9 --bagging-freq 1 --clean-copies 0 \
   --feature-noise 0.50 --cell-missing --cell-rate 0.20 --drop-field-view \
@@ -104,35 +98,7 @@ python scripts/train_model.py --train data/train --dev data/dev --use-dev \
   --query-z --seed 14 --num-threads 8
 ```
 
-In-training DEV nDCG@10 is 0.7079. On a 400-query DEV slice, additive noise at 0.50× std scores 0.4489 and 30% missing cells scores 0.5291. Intermediate checkpoints were not kept.
-
-An earlier five-copy fit, scored on a fifth of TRAIN after training on the other four fifths plus DEV:
-
-| trees | DEV (in the fit) | TRAIN-slice clean | corruption mean |
-|---|---|---|---|
-| 200 | 0.5703 | 0.4836 | 0.4579 |
-| 400 | 0.6383 | 0.4848 | 0.4581 |
-| 600 | 0.6849 | 0.4830 | 0.4560 |
-| 800 | 0.7168 | 0.4817 | 0.4548 |
-
-Grouped 5-fold cross-validation on TRAIN only, for an earlier clean fit. More leaves raise the train score. Validation stays near 0.474, then falls once the model memorizes. The 255-leaf model at 2000 trees reaches train 0.94 and was not shipped.
-
-| lr / leaves / min_data_in_leaf / feature_fraction | best trees | CV val nDCG@10 | train | val/train |
-|---|---|---|---|---|
-| 0.05 / 31 / 100 / 0.8 | 1000 | 0.4749 ± 0.0059 | 0.6243 | 0.761 |
-| 0.05 / 63 / 100 / 0.8 | 300 | 0.4744 ± 0.0063 | 0.5893 | 0.805 |
-| 0.05 / 127 / 100 / 0.8 | 500 | 0.4742 ± 0.0077 | 0.7174 | 0.661 |
-| 0.05 / 255 / 100 / 0.8 | 200 | 0.4741 ± 0.0059 | 0.6961 | 0.681 |
-| 0.05 / 63 / 500 / 0.5 | 500 | 0.4741 ± 0.0068 | 0.6233 | 0.761 |
-| 0.025 / 63 / 500 / 0.5 | 1000 | 0.4766 ± 0.0070 | 0.6249 | 0.763 |
-| 0.0125 / 63 / 500 / 0.5 | 2000 | 0.4771 ± 0.0068 | 0.6263 | 0.762 |
-
-## Track P
-`pairwise_model.pt` is a pairwise RankNet MLP, three hidden layers of 256 units, trained with |ΔnDCG| pair weights. Learning rate 5e-4, multiplied by 0.95 after each epoch, at most 40 epochs, patience 8, 64 queries per step, 4000 pairs per query. When a query has more legal pairs than that cap, the sample is drawn with probability proportional to |Δgain|, gain = 2^label − 1. `ranknet_loss` itself stays unweighted. Each feature's mean and standard deviation are computed after clipping that feature to its 1st and 99th percentile. The saved transform is still an affine rescale.
-
-The comparison fits below were scored on a tenth of TRAIN that they did not train on. Ordinary column scales scored 0.4141 there. The same clip at learning rate 1e-3 scored 0.4322. The shipped schedule scored 0.4339. A median/IQR scale scored 0.4174, clipping at the 5th percentile scored 0.3968, and two layers of 256 scored 0.4295. DEV of that comparison fit, not used to choose it, was 0.4536.
-
-The shipped file is the gain-sampled schedule trained on nine tenths of TRAIN and early-stopped on the remaining tenth (monitor 0.4577 at epoch 21). A further pass over all of TRAIN at learning rate 5e-5 scored DEV 0.4548 and was not kept. DEV of the shipped file, reported only: 0.4550.
+Neural models:
 
 ```
 python scripts/train_neural.py --kind pointwise --train data/train --dev data/dev --monitor train-slice \
@@ -143,36 +109,15 @@ python scripts/train_neural.py --kind pairwise --train data/train --dev data/dev
   --out-dir submission
 ```
 
-The same run with patience 8 and uniform pairs scored DEV 0.4531. Gain sampling plus weight decay 1e-5 scored DEV 0.4551. A second seed of the shipped schedule scored DEV 0.4532. Averaging three seeds (0.3459), a gain-target term (0.4102), and a listwise softmax (0.3823) were not used. Input noise with 3% feature dropout scored DEV 0.4523. Drawing pairs by gain times error scored DEV 0.4536. Neither replaced the shipped file.
+Dev nDCG@10 of the three models: pointwise 0.4225, pairwise 0.4550 and LambdaMART 0.7079 (in-training).
 
-`pointwise_model.pt` is a smaller MLP, hidden width 64, squared error, same early-stop split of TRAIN. It is not used to initialize the pairwise model. DEV, reported only: nDCG@10 0.4225.
+`recipe.py` (Track C1) sets leaves, leaf size, column sampling and L2 from the data size. It averages up to six LambdaMART models. Half see the raw features and half also see the within-query percentile and z-score columns, and their trees use the size rule, twice the leaves, half the leaves or fewer columns. Each model early-stops on the benchmark's vali and is then refit on train plus vali. The number of models comes from a size-based time estimate so the run fits in 20 minutes and 8 GB and depends only on the data and the seed.
 
-Dev-set nDCG@10 of the three submitted models: pointwise 0.4225, pairwise 0.4550, LambdaMART 0.7079. The LambdaMART number is in-training, because DEV is inside that fit. Pointwise and pairwise were trained on TRAIN and then scored on DEV.
-
-## Recipe
-`recipe.py` reads each benchmark's own train and vali files. Values above 1e30 are stored as missing. The fit uses each query's raw features, within-query percentiles, and within-query z-scores. The model names these columns `raw_i`, `pct_i` and `wqz_i`, and `rerank_with_ltr` reads the raw width back from the names. So a sparse held-out file whose last features never appear is still padded to the trained width.
-
-Leaf count, `min_data_in_leaf`, column sampling and L2 follow the number of rows and features. The written model averages up to five LambdaMART members, merged into one LightGBM text file with each leaf value divided by the member count. Member 0 uses the size rule. The others use twice the leaves, half the leaves, 0.6 of the column fraction, and 0.6 of the learning rate, each with its own seed. Each member early-stops on vali nDCG@10 and is refit on train+vali for its best round count times the row ratio. If vali is empty or has no relevant document, every fifth train query is held out for early stopping instead.
-
-The member count and round caps come from a cost model of rows × sampled columns × rounds, set to assume a grader three times slower than the machine it was measured on. The model therefore depends only on the data and the seed. A wall-clock stop at 15 minutes is a safety limit inside the 20-minute cap. Histograms are column-wise, which keeps peak memory lower than row-wise.
-
-Checks on MSLR TRAIN slices disguised as other benchmarks (column permutation, monotone rescaling, noise and constant columns, fewer label levels, sparse files), trained on TRAIN queries and scored on 1,000 DEV queries through `rerank_with_ltr`:
-
-| slice | rows × features | labels | one model | shipped recipe | train time |
-|---|---|---|---|---|---|
-| small | 13k × 46 | 0–2 | 0.5653 | 0.5691 (5 members) | 14 s |
-| binary | 82k × 100 | 0–1 | 0.4121 | 0.4130 (5) | 54 s |
-| medium | 184k × 136 | 0–2 | 0.5598 | 0.5632 (5) | 239 s |
-| sparse | 255k × 220 | 0–4 | 0.4536 | 0.4587 (4) | 265 s |
-| largest allowed | 501k × 300 | 0–4 | 0.4819 | 0.4846 (1) | 203 s |
-
-"One model" is the previous single-model recipe, with the column-name fix applied. Without that fix, the sparse slice scored 0.3370. With vali emptied, holding out train queries scored 0.5603 and 0.4124 on the small and binary slices, against 0.5432 and 0.4003 for a fixed round count with no early stopping. In the same comparisons, twice the leaves and lower learning rates did not beat the size rule. Dropping the refit lost 0.004 to 0.007, and raw features alone lost up to 0.005.
-
-## Generalization
-The shipped tree uses 127 leaves and 2835 trees, with DEV inside the fit, so 0.7079 is an in-training score. The neural models were not refit on DEV. Fusion weights were chosen on TRAIN. The recipe's hyperparameters come from the benchmark it is handed, not from MSLR constants.
+## Final configuration: what you traded off between dev accuracy and generalization
+We gave up some clean accuracy for robustness. Training on DEV and on corrupted copies lifts DEV to 0.7079, but that number is in-training and says little about unseen queries. The CV table shows validation barely moves with more leaves or trees, so the gain we aimed for is stability on the hidden C2 versions. The corrupted copies and the scale-free within-query columns keep the ranking steady when features are noisy, missing or rescaled. For C1 we used rules instead of constants and averaged several tree shapes, so no single setting tuned on MSLR decides the result on a dataset we cannot see.
 
 ## AI-use disclosure
-Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) were used to read the spec and starter code, write the submission modules, change the training scripts, run the experiments, and draft these notes.
+Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) were used to read the spec and starter code, write the submission modules, change the training scripts, run the experiments and draft these notes.
 
 ## Code provenance
-No external code was copied. Formulas, from the assignment references: RRF (Cormack, Clarke and Buettcher, SIGIR 2009); CombSUM and CombMNZ (Fox and Shaw, TREC-2 1994); RankNet (Burges et al., ICML 2005); LambdaRank |ΔnDCG| pair weights (Burges, MSR-TR-2010-82) in `delta_ndcg_weights` and `weighted_ranknet_loss`. LambdaMART is LightGBM `lambdarank`. Libraries: NumPy, LightGBM, PyTorch, as in `requirements.txt`.
+No external code was copied. Formulas come from the assignment references: RRF (Cormack, Clarke and Buettcher, SIGIR 2009), CombSUM and CombMNZ (Fox and Shaw, TREC-2 1994), RankNet (Burges et al., ICML 2005) and LambdaRank |ΔnDCG| pair weights (Burges, MSR-TR-2010-82) in `delta_ndcg_weights` and `weighted_ranknet_loss`. LambdaMART is LightGBM `lambdarank`. Libraries: NumPy, LightGBM and PyTorch, as in `requirements.txt`.

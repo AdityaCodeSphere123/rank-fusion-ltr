@@ -1,12 +1,11 @@
-"""Train the LambdaMART artifact that submission/ranking.py loads (offline; grading never retrains).
+"""Train the LambdaMART model that submission/ranking.py loads. Grading never retrains it.
 
     python scripts/train_model.py --train data/train --out submission/model.txt --trees 300
 
---train takes a split file or a directory holding train.txt. Pass --use-dev to ALSO train on the dev split;
-that raises your dev nDCG (Tracks A and B) without helping on queries the model has not seen, so your public
-leaderboard position will overstate where you stand (assignment Section 7). Whatever you do, declare it in your
-submission notes (Section 10).
-
+--train takes a file or a folder with train.txt in it. --use-dev also trains on the dev split.
+The extra flags add changed copies of the training rows (noise, missing cells, shuffled fields
+and so on) so the model holds up on the hidden C2 versions. The exact commands for the shipped
+model are in docs/SUBMISSION_NOTES.md.
 """
 import os
 import sys
@@ -45,13 +44,9 @@ def _query_z(X, q):
     return out
 
 
-def _expand(X, q, with_z=False):
-    """Raw features plus within-query percentiles. with_z appends within-query
-    z-scores (width 3D). Same layout as rerank_with_ltr."""
-    parts = [np.asarray(X, dtype=np.float32), _query_ranks(X, q)]
-    if with_z:
-        parts.append(_query_z(X, q))
-    return np.hstack(parts)
+def _expand(X, q):
+    """Raw features, then their percentile and z-score inside each query. Same layout as rerank_with_ltr."""
+    return np.hstack([np.asarray(X, dtype=np.float32), _query_ranks(X, q), _query_z(X, q)])
 
 
 def _run_codes(q):
@@ -79,11 +74,8 @@ def main():
     ap.add_argument("--feature-noise", default="0",
                     help="comma-separated Gaussian noise scales, in units of each feature's TRAIN std. "
                          "Each scale appends one extra copy of the rows (0 = off). Labels are unchanged.")
-    ap.add_argument("--query-ranks", action="store_true",
-                    help="append within-query feature ranks, the same transform rerank_with_ltr applies "
-                         "when the model has twice as many features as the input")
     ap.add_argument("--query-z", action="store_true",
-                    help="also append within-query z-scores (model width 3D). Implies --query-ranks")
+                    help="add each feature's percentile and z-score inside its query (model width 3D)")
     ap.add_argument("--log-view", action="store_true",
                     help="append a log1p copy of the rows")
     ap.add_argument("--z-view", action="store_true",
@@ -130,8 +122,7 @@ def main():
     scales = [float(s) for s in str(args.feature_noise).split(",") if float(s) > 0]
     base_codes = _run_codes(np.asarray(q))
     n_queries = int(base_codes[-1]) + 1
-    # Views are built one at a time. Copy ids are shifted so a percentile never
-    # mixes two copies of the same query.
+    # Each copy gets new query ids so a percentile never mixes two copies of one query
     builders = []
     if args.clean_copies > 0:
         builders.append(("clean", lambda raw, _f=None: raw))
@@ -234,14 +225,12 @@ def main():
             return (raw * (1.0 + s * rng.randn(*raw.shape).astype(np.float32))).astype(np.float32)
 
         builders.append(("mul", _mul))
-    if args.query_z:
-        args.query_ranks = True
-    want_ranks = (args.query_ranks or args.log_view or args.z_view or args.query_scale or args.permute_view
+    want_ranks = (args.query_z or args.log_view or args.z_view or args.query_scale or args.permute_view
                   or args.cell_view or args.cell_missing or args.drop_field_view or args.mul_view > 0)
     if len(builders) > 1 or want_ranks:
-        # Fill one preallocated block so the copies are not all live at once.
+        # fill one big array copy by copy so all copies are never in memory twice
         probe_q = base_codes
-        probe = _expand(X[:1], probe_q[:1], with_z=args.query_z) if want_ranks else np.asarray(X[:1], dtype=np.float32)
+        probe = _expand(X[:1], probe_q[:1]) if want_ranks else np.asarray(X[:1], dtype=np.float32)
         width = probe.shape[1]
         del probe
         gib = n_clean * len(builders) * width * 4 / 1024**3
@@ -252,7 +241,7 @@ def main():
         for i, (_, build) in enumerate(builders):
             view = np.asarray(build(X), dtype=np.float32)
             vq = base_codes + i * n_queries
-            block = _expand(view, vq, with_z=args.query_z) if want_ranks else view
+            block = _expand(view, vq) if want_ranks else view
             a = i * n_clean
             big[a:a + n_clean] = block
             big_y[a:a + n_clean] = y
@@ -277,7 +266,7 @@ def main():
     if dev is not None:
         Xd, yd, qd = dev
         if want_ranks:
-            Xd = _expand(Xd, np.asarray(qd), with_z=args.query_z)
+            Xd = _expand(Xd, np.asarray(qd))
         label = "dev nDCG@10 (in-training, dev rows were fit)" if args.use_dev else "dev   nDCG@10"
         print(f"{label} = {ndcg10(model, Xd, yd, qd):.4f}")
 
