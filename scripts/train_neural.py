@@ -62,6 +62,9 @@ def main():
     ap.add_argument("--lr-decay", type=float, default=1.0)
     ap.add_argument("--scale", default="standard",
                     help="affine feature scaler stored in the artifact: standard, or winsor (optional percentile, e.g. winsor5)")
+    ap.add_argument("--weight-decay", type=float, default=0.0)
+    ap.add_argument("--pair-sampling", choices=["uniform", "gain"], default="uniform")
+    ap.add_argument("--ranknet-sigma", type=float, default=1.0)
     ap.add_argument("--use-dev", action="store_true",
                     help="append the dev split to the training rows. Only with --monitor train-slice; "
                          "the monitor and the holdout stay query-disjoint slices of TRAIN")
@@ -102,7 +105,8 @@ def main():
                                      batch_size=args.batch_size, lr=args.lr, pairs_per_query=args.pairs_per_query,
                                      patience=args.patience, hidden=args.hidden, verbose=True,
                                      pair_weighting=args.pair_weighting, queries_per_batch=args.queries_per_batch,
-                                     lr_decay=args.lr_decay, scale=args.scale)
+                                     lr_decay=args.lr_decay, scale=args.scale, weight_decay=args.weight_decay,
+                                     pair_sampling=args.pair_sampling, ranknet_sigma=args.ranknet_sigma)
         secs = time.perf_counter() - t0
         scorer = make_scorer(net, std)
         best = max(hist, key=lambda h: h["dev_ndcg@10"])

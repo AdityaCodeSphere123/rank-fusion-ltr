@@ -88,9 +88,10 @@ def pairwise_step(network: nn.Module, optimizer, x_preferred: torch.Tensor, x_ot
     return float(loss.item())
 
 
-def weighted_ranknet_loss(s_preferred: torch.Tensor, s_other: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
-    """RankNet weighted by a non-negative weight per pair. Equal weights match ranknet_loss."""
-    d = s_preferred - s_other
+def weighted_ranknet_loss(s_preferred: torch.Tensor, s_other: torch.Tensor, weights: torch.Tensor,
+                          sigma: float = 1.0) -> torch.Tensor:
+    """RankNet weighted by a non-negative weight per pair. Equal weights and sigma 1 match ranknet_loss."""
+    d = (s_preferred - s_other) * sigma
     per_pair = torch.logaddexp(torch.zeros_like(d), -d)
     return (weights * per_pair).sum() / weights.sum().clamp_min(1e-12)
 
@@ -115,14 +116,46 @@ def delta_ndcg_weights(scores: torch.Tensor, labels: torch.Tensor, pairs: torch.
         return ((gain[i] - gain[j]).abs() * (disc[i] - disc[j]).abs() / idcg).to(torch.float32)
 
 
+def make_pairs_gain(qids, labels, pairs_per_query: int, rng: np.random.RandomState) -> np.ndarray:
+    """Like make_pairs, but a capped sample is drawn with probability proportional to |Δgain|.
+
+    Gain is 2^label - 1. Unequal integer labels have unequal gains, so every legal pair stays eligible.
+    """
+    labels = np.asarray(labels)
+    out = []
+    for rows in _query_rows(qids):
+        if len(rows) < 2:
+            continue
+        lab = labels[rows]
+        i, j = np.triu_indices(len(rows), k=1)
+        keep = lab[i] != lab[j]
+        i, j = i[keep], j[keep]
+        if len(i) == 0:
+            continue
+        if len(i) > pairs_per_query:
+            gain = np.power(2.0, lab.astype(np.float64)) - 1.0
+            w = np.abs(gain[i] - gain[j])
+            w = w / w.sum()
+            pick = rng.choice(len(i), size=pairs_per_query, replace=False, p=w)
+            i, j = i[pick], j[pick]
+        first_better = lab[i] > lab[j]
+        hi = np.where(first_better, i, j)
+        lo = np.where(first_better, j, i)
+        out.append(np.stack([rows[hi], rows[lo]], axis=1))
+    if not out:
+        return np.zeros((0, 2), dtype=np.int64)
+    return np.concatenate(out).astype(np.int64)
+
+
 def lambdarank_query_step(network: nn.Module, optimizer, Xt: torch.Tensor, yt: torch.Tensor,
-                          query_rows: List[np.ndarray], pairs_per_query: int, rng: np.random.RandomState) -> float:
-    """One step on whole queries: pairs from make_pairs, weights from the current scores."""
+                          query_rows: List[np.ndarray], pairs_per_query: int, rng: np.random.RandomState,
+                          pair_fn=make_pairs, sigma: float = 1.0) -> float:
+    """One step on whole queries: pairs from pair_fn, weights from the current scores."""
     sizes = [len(r) for r in query_rows]
     flat = torch.from_numpy(np.concatenate(query_rows))
     local_q = np.repeat(np.arange(len(query_rows)), sizes)
     labels = yt[flat]
-    pairs = make_pairs(local_q, labels.numpy(), pairs_per_query, rng)
+    pairs = pair_fn(local_q, labels.numpy(), pairs_per_query, rng)
     if len(pairs) == 0:
         return 0.0
     optimizer.zero_grad()
@@ -140,7 +173,7 @@ def lambdarank_query_step(network: nn.Module, optimizer, Xt: torch.Tensor, yt: t
         weights[p0:p1] = delta_ndcg_weights(scores[a:b].detach(), labels[a:b], pairs_t[p0:p1] - a)
     if float(weights.sum()) <= 0:
         return 0.0
-    loss = weighted_ranknet_loss(scores[pairs_t[:, 0]], scores[pairs_t[:, 1]], weights)
+    loss = weighted_ranknet_loss(scores[pairs_t[:, 0]], scores[pairs_t[:, 1]], weights, sigma=sigma)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(network.parameters(), 5.0)
     optimizer.step()
@@ -170,18 +203,22 @@ def _standardizer_for(X: np.ndarray, scale: str) -> Standardizer:
 def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch_size: int = 1024,
                 lr: float = 1e-3, pairs_per_query: int = 300, patience: int = 3, hidden=64,
                 verbose: bool = False, pair_weighting: str = "none", queries_per_batch: int = 16,
-                lr_decay: float = 1.0, scale: str = "standard"):
+                lr_decay: float = 1.0, scale: str = "standard", weight_decay: float = 0.0,
+                pair_sampling: str = "uniform", ranknet_sigma: float = 1.0):
     """Train a pointwise or pairwise scorer. Restores the best dev-nDCG weights.
 
     dev is the early-stopping monitor; pass a query-disjoint slice of TRAIN so the
     real DEV split stays unseen. pair_weighting="delta_ndcg" (pairwise only) uses
-    minibatches of whole queries and |delta nDCG| weights. The standardizer is
-    fit on train only.
+    minibatches of whole queries and |delta nDCG| weights. pair_sampling="gain"
+    draws the capped pairs with probability proportional to |Δgain|. The standardizer
+    is fit on train only.
     """
     if kind not in ("pointwise", "pairwise"):
         raise ValueError("kind must be 'pointwise' or 'pairwise'")
     if pair_weighting not in ("none", "delta_ndcg"):
         raise ValueError("pair_weighting must be 'none' or 'delta_ndcg'")
+    if pair_sampling not in ("uniform", "gain"):
+        raise ValueError("pair_sampling must be 'uniform' or 'gain'")
     X, y, q = train
     Xd, yd, qd = dev
     set_seed(seed)
@@ -189,10 +226,11 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
     Xt = torch.from_numpy(standardizer.transform(X))
     yt = torch.from_numpy(np.asarray(y, dtype=np.float32))
     network = ScoringNetwork(X.shape[1], hidden)
-    optimizer = torch.optim.Adam(network.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(network.parameters(), lr=lr, weight_decay=weight_decay)
     rng = np.random.RandomState(seed)
     lambdarank = kind == "pairwise" and pair_weighting == "delta_ndcg"
     query_rows = _query_rows(q) if lambdarank else None
+    pair_fn = make_pairs_gain if pair_sampling == "gain" else make_pairs
 
     history = []
     best_ndcg, best_state, since_best = -np.inf, None, 0
@@ -204,7 +242,8 @@ def train_model(kind: str, train, dev, *, seed: int = 0, epochs: int = 20, batch
             for b in range(0, len(order), queries_per_batch):
                 batch = [query_rows[i] for i in order[b:b + queries_per_batch]]
                 losses.append(lambdarank_query_step(
-                    network, optimizer, Xt, yt, batch, pairs_per_query, rng))
+                    network, optimizer, Xt, yt, batch, pairs_per_query, rng,
+                    pair_fn=pair_fn, sigma=ranknet_sigma))
         elif kind == "pairwise":
             pairs = make_pairs(q, y, pairs_per_query, rng)
             pairs = pairs[rng.permutation(len(pairs))]
