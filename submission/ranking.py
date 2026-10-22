@@ -3,10 +3,13 @@
 fuse_candidates: unweighted CombSUM of BM25 (document and title) and LMIR.DIR.
 LMIR.JM is dropped; on TRAIN every channel-weight grid set it to 0.
 
-rerank_with_ltr: the LightGBM model loaded by prepare(). Rows are padded or
-truncated to the model's width. Twice the candidate width is raw features
-plus within-query percentiles. Width 3D also appends a within-query z-score
-of each raw feature. Every other width, including recipe.py models, is
+rerank_with_ltr: the LightGBM model loaded by prepare(). A recipe.py model
+names its columns raw_i, pct_i, wqz_i; its raw width D is read from those
+names, the candidate rows are padded or truncated to D (a sparse file need
+not mention the last feature), and the percentile and z-score views are
+rebuilt. For an unnamed model, twice the candidate width is raw features
+plus within-query percentiles, and width 3D also appends a within-query
+z-score of each raw feature. Any other width is padded or truncated and
 scored on the raw vectors.
 
 prepare() only loads the artifact and raises if it is missing. Both rankers
@@ -24,10 +27,11 @@ FUSION_CHANNELS = ("bm25_whole_document", "bm25_title", "lmir_dir_whole_document
 
 _MODEL = None
 _N_FEATURES = None
+_RAW_WIDTH = None
 
 
 def prepare(model_path: str) -> None:
-    global _MODEL, _N_FEATURES
+    global _MODEL, _N_FEATURES, _RAW_WIDTH
     if not os.path.isfile(model_path):
         raise FileNotFoundError(
             f"trained model artifact not found at {model_path!r}; run scripts/train_model.py and "
@@ -35,7 +39,16 @@ def prepare(model_path: str) -> None:
         )
     import lightgbm as lgb
     model = lgb.Booster(model_file=model_path)
-    _MODEL, _N_FEATURES = model, model.num_feature()
+    _MODEL, _N_FEATURES, _RAW_WIDTH = model, model.num_feature(), _named_raw_width(model.feature_name())
+
+
+def _named_raw_width(names: List[str]):
+    """D when the columns are raw_0..raw_{D-1}, pct_0.., wqz_0.. in that order, else None."""
+    if not names or len(names) % 3:
+        return None
+    d = len(names) // 3
+    expected = [f"{p}_{i}" for p in ("raw", "pct", "wqz") for i in range(d)]
+    return d if list(names) == expected else None
 
 
 def _unique(ids: List[str]) -> List[str]:
@@ -117,8 +130,16 @@ def within_query_z(X: np.ndarray) -> np.ndarray:
     return out
 
 
-def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int) -> np.ndarray:
+def _feature_matrix(ids: List[str], features: Dict[str, List[float]], width: int,
+                    raw_width: int = None) -> np.ndarray:
     rows = [np.asarray(features[d], dtype=np.float64).ravel() for d in ids]
+    if raw_width is not None:
+        X = np.zeros((len(rows), raw_width), dtype=np.float64)
+        for i, r in enumerate(rows):
+            n = min(raw_width, r.shape[0])
+            X[i, :n] = r[:n]
+        X = sanitize(X)
+        return np.hstack([X, within_query_ranks(X), within_query_z(X)])
     observed = max((r.shape[0] for r in rows), default=0)
     X = np.zeros((len(rows), observed), dtype=np.float64)
     for i, r in enumerate(rows):
@@ -146,7 +167,7 @@ def rerank_with_ltr(qid: str, candidate_doc_ids: List[str], features: Dict[str, 
     ids = _unique(candidate_doc_ids)
     if not ids:
         return []
-    X = _feature_matrix(ids, features, _N_FEATURES)
+    X = _feature_matrix(ids, features, _N_FEATURES, _RAW_WIDTH)
     preds = _MODEL.predict(X, num_threads=1)
     order = np.argsort(-preds, kind="stable")
     return [(ids[i], float(preds[i])) for i in order[:k]]

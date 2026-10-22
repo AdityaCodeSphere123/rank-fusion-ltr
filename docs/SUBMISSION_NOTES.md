@@ -6,7 +6,7 @@
 | LambdaMART `model.txt` | TRAIN and DEV | tree count and corruption views, compared on TRAIN slices and on DEV | none |
 | `pointwise_model.pt` | 9/10 of TRAIN | not tuned | the other tenth of TRAIN (seed 0) |
 | `pairwise_model.pt` | 9/10 of TRAIN. Mean and std are fit on that part only | pair sampling, pair count, patience, weight decay, and a final low-lr pass | the other tenth of TRAIN (seed 0). No final pass |
-| `recipe.py` | each benchmark's train and vali | MSLR TRAIN cross-validation and the synthetic sets in `data/toy_transfer/` | that benchmark's vali nDCG@10, then a refit on train+vali |
+| `recipe.py` | each benchmark's train and vali | MSLR TRAIN cross-validation, disguised MSLR TRAIN slices scored on DEV queries, and the synthetic sets in `data/toy_transfer/` | that benchmark's vali nDCG@10 per member, then each member is refit on train+vali |
 | `fuse_candidates` | none | channel subset and weights on TRAIN | — |
 
 DEV is inside the LambdaMART fit, so 0.7079 is an in-training score. The neural models, the fusion weights, and the recipe do not train on DEV.
@@ -150,7 +150,23 @@ The same run with patience 8 and uniform pairs scored DEV 0.4531. Gain sampling 
 Dev-set nDCG@10 of the three submitted models: pointwise 0.4225, pairwise 0.4550, LambdaMART 0.7079. The LambdaMART number is in-training, because DEV is inside that fit. Pointwise and pairwise were trained on TRAIN and then scored on DEV.
 
 ## Recipe
-`recipe.py` reads each benchmark's own train and vali files. Values above 1e30 are stored as missing. Leaf size, column sampling, L2, and the round budget follow the number of rows and features. It early-stops on that benchmark's vali nDCG@10, then refits on train+vali when the size-based cost estimate fits in the time budget. A wall-clock stop at 15 minutes is a safety limit inside the 20-minute cap. The fit uses each query's raw features, within-query percentiles, and within-query z-scores. `rerank_with_ltr` rebuilds those columns. On MSLR TRAIN slices, including columns that were rescaled and slices with added noise columns, the three-column form raised the query-held-out nDCG@10 over raw features alone.
+`recipe.py` reads each benchmark's own train and vali files. Values above 1e30 are stored as missing. The fit uses each query's raw features, within-query percentiles, and within-query z-scores. The model names these columns `raw_i`, `pct_i` and `wqz_i`, and `rerank_with_ltr` reads the raw width back from the names. So a sparse held-out file whose last features never appear is still padded to the trained width.
+
+Leaf count, `min_data_in_leaf`, column sampling and L2 follow the number of rows and features. The written model averages up to five LambdaMART members, merged into one LightGBM text file with each leaf value divided by the member count. Member 0 uses the size rule. The others use twice the leaves, half the leaves, 0.6 of the column fraction, and 0.6 of the learning rate, each with its own seed. Each member early-stops on vali nDCG@10 and is refit on train+vali for its best round count times the row ratio. If vali is empty or has no relevant document, every fifth train query is held out for early stopping instead.
+
+The member count and round caps come from a cost model of rows × sampled columns × rounds, set to assume a grader three times slower than the machine it was measured on. The model therefore depends only on the data and the seed. A wall-clock stop at 15 minutes is a safety limit inside the 20-minute cap. Histograms are column-wise, which keeps peak memory lower than row-wise.
+
+Checks on MSLR TRAIN slices disguised as other benchmarks (column permutation, monotone rescaling, noise and constant columns, fewer label levels, sparse files), trained on TRAIN queries and scored on 1,000 DEV queries through `rerank_with_ltr`:
+
+| slice | rows × features | labels | one model | shipped recipe | train time |
+|---|---|---|---|---|---|
+| small | 13k × 46 | 0–2 | 0.5653 | 0.5691 (5 members) | 14 s |
+| binary | 82k × 100 | 0–1 | 0.4121 | 0.4130 (5) | 54 s |
+| medium | 184k × 136 | 0–2 | 0.5598 | 0.5632 (5) | 239 s |
+| sparse | 255k × 220 | 0–4 | 0.4536 | 0.4587 (4) | 265 s |
+| largest allowed | 501k × 300 | 0–4 | 0.4819 | 0.4846 (1) | 203 s |
+
+"One model" is the previous single-model recipe, with the column-name fix applied. Without that fix, the sparse slice scored 0.3370. With vali emptied, holding out train queries scored 0.5603 and 0.4124 on the small and binary slices, against 0.5432 and 0.4003 for a fixed round count with no early stopping. In the same comparisons, twice the leaves and lower learning rates did not beat the size rule. Dropping the refit lost 0.004 to 0.007, and raw features alone lost up to 0.005.
 
 ## Generalization
 The shipped tree uses 127 leaves and 2835 trees, with DEV inside the fit, so 0.7079 is an in-training score. The neural models were not refit on DEV. Fusion weights were chosen on TRAIN. The recipe's hyperparameters come from the benchmark it is handed, not from MSLR constants.
