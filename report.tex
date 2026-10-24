@@ -340,7 +340,7 @@ Since more capacity does not help unseen queries, I spent it on \textbf{robustne
 \item \textbf{Corrupted training copies:} noise, $\log$ view, zeroed or missing cells, shuffled fields, per-query rescaling; labels stay the same.
 \end{itemize}
 
-During the staged run below, the real C2 score rose from 0.381 to 0.392 (uploads 15--22).
+During the staged run below, the real C2 score rose from 0.388 at 1{,}200 trees to 0.392 at 2{,}585 trees (uploads 18--22).
 
 \begin{figure}[h]
 \centering
@@ -386,7 +386,7 @@ An MSLR model cannot be used on the hidden datasets (different, unnamed features
 
 % =====================================================================
 \section{Final configuration and what I traded off}
-\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079 but my estimate for unseen clean queries is the CV value of about 0.477. Second, I tuned for \emph{robustness rather than clean DEV}: the corrupted copies and within-query columns target noisy, missing or rescaled features, which is what Track~C2 measures; over uploads 15--22, C2 rose from 0.381 to 0.392. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
+\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079 but my estimate for unseen clean queries is the CV value of about 0.477. Second, I tuned for \emph{robustness rather than clean DEV}: the corrupted copies and within-query columns target noisy, missing or rescaled features, which is what Track~C2 measures; over uploads 18--22, C2 rose from 0.388 to 0.392. The 63-leaf clean model has the best val/train ratio (0.81) at almost the same validation score (0.474), but no defence against noisy or rescaled features, so I did not ship it.
 
 \begin{center}
 \normalsize\renewcommand{\arraystretch}{1.45}
