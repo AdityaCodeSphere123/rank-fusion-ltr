@@ -62,7 +62,7 @@
 \centering
 \vspace*{1.2cm}
 
-\IfFileExists{images/iitd.png}{{\includegraphics[width=4.2cm]{images/iitd.png}}}{}
+\IfFileExists{iitd.png}{{\includegraphics[width=4.2cm]{iitd.png}}}{}
 
 \vspace{1.0cm}
 
@@ -147,7 +147,7 @@ The submission has four parts (Figure~\ref{fig:pipe}). Fusion and the two neural
 \section{Rank fusion}
 \begin{minipage}[t]{0.51\textwidth}
 \vspace{0pt}
-Each candidate has four base-ranker scores: BM25, LMIR.DIR and LMIR.JM on the whole document, and BM25 on the title. Their scales differ (BM25 is positive, LMIR is a negative log-probability), so CombSUM and CombMNZ first \textbf{min--max normalise each channel inside the query} to $[0,1]$ (written $\tilde s$). A channel where all documents score the same becomes all zeros. RRF uses 1-based ranks; ties keep the candidate order.
+Each candidate has four base ranker scores: BM25, LMIR.DIR and LMIR.JM on the whole document and BM25 on the title. Their scales differ (BM25 is positive, LMIR is a negative log-probability) so CombSUM and CombMNZ first \textbf{min--max normalise each channel inside the query} to $[0,1]$ (written $\tilde s$). A channel where all documents score the same becomes all zeros. RRF uses 1-based ranks; ties keep the candidate order.
 \vspace{-3pt}
 \[
 \mathrm{RRF}(d)=\sum_s\frac{1}{c+\mathrm{rank}_s(d)},\qquad
@@ -173,19 +173,20 @@ CombSUM, 4 channels & 0.2961 & 0.3056 & 0.1285\\
 \textbf{CombSUM, 3 channels (shipped)} & \textbf{0.3000} & \textbf{0.3105} & \textbf{0.1302}\\
 \bottomrule
 \end{tabular}
-\captionof{table}{Fusion methods (nDCG@10 unless noted). DEV was only printed, never used to choose.}
+\captionof{table}{Fusion methods (nDCG@10). DEV was only printed, never used to choose.}
 \end{minipage}
 
 \vspace{1pt}
-All choices were made on the 6{,}000 TRAIN queries: RRF with $c$ from 1 to 500, CombSUM, CombMNZ, a z-score sum, and channel weights in $\{0,0.25,0.5,1,2\}$.
+All choices were made on the 6000 TRAIN queries: RRF with $c$ from 1 to 500, CombSUM, CombMNZ, a z-score sum, and channel weights in $\{0,0.25,0.5,1,2\}$.
 \begin{itemize}
 \item \textbf{RRF is the weakest fusion.} It improves as $c$ grows up to about 150 (0.2843 at $c=1$), then stays flat. It keeps only the order of each list and throws away how far apart the scores are.
 \item \textbf{CombMNZ $\approx$ CombSUM.} After min--max, only the single lowest document of each channel gets 0, so the MNZ multiplier is almost always 4 and changes nothing.
 \item \textbf{LMIR.JM is dropped.} The weight search gave it weight 0. It is the weakest single channel (0.2621) and mostly repeats LMIR.DIR. To check that picking from about 400 options did not overfit, I chose on 4 TRAIN folds and scored the 5th: $0.2989\pm0.0041$, close to 0.3000.
 \end{itemize}
 
+
 % =====================================================================
-\section{Pointwise, pairwise and LambdaMART}
+\section{Pointwise, Pairwise and LambdaMART}
 \begin{center}
 \footnotesize
 \begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
@@ -193,23 +194,23 @@ All choices were made on the 6{,}000 TRAIN queries: RRF with $c$ from 1 to 500, 
  & \textbf{Pointwise} & \textbf{Pairwise (RankNet)} & \textbf{LambdaMART}\\
 \midrule
 One example & one document & two documents of the \emph{same} query, different labels & a whole query \\
-Loss & $(s-y)^2$, label $y\in\{0,\dots,4\}$ & $\log\bigl(1+e^{-(s_i-s_j)}\bigr)$, $i$ more relevant; weighted by $|\Delta\mathrm{nDCG}_{ij}|$ in training & lambdas: RankNet gradient $\times|\Delta\mathrm{nDCG}_{ij}|$ \\
-Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ (largest Track~P allows) & 2{,}835 trees, 127 leaves \\
+Loss & $(s-y)^2$, label $y\in\{0,\dots,4\}$ & $\log\bigl(1+e^{-(s_i-s_j)}\bigr)$, $i$ more relevant; weighted by $|\Delta\mathrm{nDCG}_{ij}|$ in training & RankNet gradient $\times|\Delta\mathrm{nDCG}_{ij}|$ \\
+Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ & shipped: 2{,}835 trees, 127 leaves \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-\begin{minipage}[t]{0.56\textwidth}
+\begin{minipage}[t]{0.44\textwidth}
 \vspace{0pt}
-\textbf{Pairwise training.} Pairs come only from one query, ties are dropped, and the better document is first. Each batch is 64 whole queries with up to 4{,}000 pairs per query (picked more often when the gain gap $2^{y_i}-2^{y_j}$ is large). Each pair is weighted by $|\Delta\mathrm{nDCG@10}|$, the change in nDCG if the two documents swapped places. The graded \texttt{ranknet\_loss} stays plain and unweighted, and uses \texttt{logaddexp} so a huge score gap cannot overflow. Features are clipped to their 1st--99th percentile and standardised (fit on training rows only). Both networks use Adam, early-stop on a fixed tenth of TRAIN and keep the best epoch; DEV is scored once, at the end.
+\textbf{Pairwise training.} Pairs come from one query only and ties are dropped. Each batch holds 64 queries with up to 4{,}000 pairs each, and each pair is weighted by how much nDCG@10 would change if the two documents swapped. The graded \texttt{ranknet\_loss} itself stays plain and unweighted. Both networks use Adam and early-stop on a fixed tenth of TRAIN; DEV is scored once, at the end.
 
-\textbf{What a lambda is.} For a pair where $i$ is more relevant, RankNet's gradient says ``push $s_i$ up, push $s_j$ down''. LambdaMART multiplies that push by $|\Delta\mathrm{nDCG}_{ij}|$: a swap at ranks 1 and 2 matters a lot, a swap at ranks 80 and 90 almost not at all. The sum of all pushes on a document is its \emph{lambda}. Each new regression tree is fit to the lambdas and added with a small learning rate; then scores and lambdas are recomputed.
+\textbf{LambdaMART} uses the same idea with trees: a swap near the top of the ranking gets a large push, a swap far down almost none. Each new tree is fit to these pushes.
 \end{minipage}\hfill
-\begin{minipage}[t]{0.42\textwidth}
+\begin{minipage}[t]{0.54\textwidth}
 \vspace{0pt}
 \centering
 \begin{tikzpicture}
-\begin{axis}[rep, xbar, bar shift=0pt, width=3.6cm, height=3.0cm, bar width=6pt,
+\begin{axis}[rep, xbar, bar shift=0pt, width=5.0cm, height=3.7cm, bar width=8pt,
   xmin=0.25, xmax=0.8, xtick={0.3,0.4,0.5,0.6,0.7},
   xlabel={DEV nDCG@10},
   symbolic y coords={bm,fu,pw,pr,lmt,lms}, ytick={bm,fu,pw,pr,lmt,lms}, y dir=reverse,
@@ -229,87 +230,74 @@ Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ (larges
 \end{minipage}
 
 \vspace{2pt}
-\textbf{Comparison (Figure~\ref{fig:dev}).} \textbf{Pairwise beats pointwise by 0.033.} Pointwise looks at each document alone, so an error at rank~1 costs the same as one at rank~50. In an early run with the \emph{same} 64-unit network, plain RankNet and pointwise were almost equal on DEV (0.4266 vs.\ 0.4297), so the gain came from the $|\Delta\mathrm{nDCG}|$ weights and the wider network. \textbf{LambdaMART is best:} fit on TRAIN only with the CV-chosen setting (Section~\ref{sec:cv}), it scores 0.4845 on DEV. The shipped file's 0.7079 is an in-training score (DEV was in its fit), so it is not compared.
+\textbf{Comparison.} \textbf{LambdaMART is best}, then pairwise, then pointwise. Pairwise beats pointwise by 0.033: pointwise learns each document's grade on its own, while pairwise learns the order inside a query, which is what nDCG measures. For a fair LambdaMART score I use a model fit on TRAIN only with the CV-chosen setting (63 leaves, 2{,}000 trees, Section~\ref{sec:cv}): 0.4845. The shipped file's 0.7079 is an in-training score, so it is not compared.
 
 % =====================================================================
 \section{Cross-validation and the generalisation gap}\label{sec:cv}
-\begin{minipage}[t]{0.70\textwidth}
-\vspace{0pt}
-I do not have the held-out queries, so I measure the gap with \textbf{grouped 5-fold cross-validation inside TRAIN} (right). All documents of a query go to the same fold, so no query is on both sides. Each run trains on 4{,}800 queries and validates on 1{,}200. One model per fold is grown to the largest tree count and scored at fixed counts 100, 200, 300, 500, 750, 1000, 1500, 2000 (\texttt{predict(num\_iteration=n)}), so \textbf{nothing is early-stopped on the fold I report}. Trees need no feature scaling, so nothing fitted leaks across folds. I report the mean $\pm$ std over the five validation folds and the val/train ratio.
-\end{minipage}\hfill
-\begin{minipage}[t]{0.27\textwidth}
-\vspace{2pt}
-\centering
-\begin{tikzpicture}[x=0.62cm,y=0.3cm,font=\scriptsize]
-  \foreach \r in {1,...,5} {
-    \foreach \c in {1,...,5} {
-      \ifnum\r=\c \fill[cA!60] (\c-1,-\r) rectangle (\c-0.08,-\r+0.82);
-      \else \fill[cB!30] (\c-1,-\r) rectangle (\c-0.08,-\r+0.82); \fi
-    }
-    \node[anchor=east] at (-0.05,-\r+0.41) {run \r};
-  }
-  \foreach \c in {1,...,5} { \node at (\c-0.54,0.45) {F\c}; }
-  \fill[cB!30] (0,-6.4) rectangle (0.5,-5.8); \node[anchor=west] at (0.5,-6.1) {train};
-  \fill[cA!60] (2.3,-6.4) rectangle (2.8,-5.8); \node[anchor=west] at (2.8,-6.1) {validate};
-\end{tikzpicture}
-\end{minipage}
+I cannot see the held-out queries, so I measure the gap with \textbf{grouped 5-fold cross-validation inside TRAIN}: all documents of a query go to the same fold, each run trains on 4{,}800 queries and validates on 1{,}200. Each model is scored at fixed tree counts, so \textbf{nothing is early-stopped on the fold I report}. I report the mean $\pm$ std over the five validation folds and the val/train ratio.
 
 \begin{figure}[h]
 \centering
 \begin{tikzpicture}
-\begin{axis}[rep, width=3.25cm, title={(a) CV validation vs.\ trees},
+\begin{axis}[rep, width=6.8cm, height=4.0cm, title={(a) CV validation vs.\ trees},
   xmode=log, log basis x=10, xtick={100,200,500,1000,2000}, xticklabels={100,200,500,1k,2k},
-  ymin=0.4505, ymax=0.478, ytick={0.46,0.465,0.47,0.475},
+  ymin=0.4505, ymax=0.478, ytick={0.455,0.46,0.465,0.47,0.475},
   yticklabel style={/pgf/number format/fixed,/pgf/number format/precision=3},
   xlabel={trees (lr 0.05)}, ylabel={nDCG@10},
-  legend style={at={(0.5,0.02)}, anchor=south, column sep=1pt}, legend columns=4]
+  legend style={at={(0.5,0.02)}, anchor=south, column sep=2pt}, legend columns=5]
+\addlegendimage{empty legend}
 \addplot[cA, mark=*] coordinates {(100,0.4621)(200,0.4696)(300,0.4719)(500,0.4745)(1000,0.4749)(1500,0.4741)(2000,0.4731)};
 \addplot[cC, mark=square*] coordinates {(100,0.4662)(200,0.4724)(300,0.4744)(500,0.4742)(1000,0.4735)(1500,0.4708)(2000,0.4708)};
 \addplot[cB, mark=triangle*] coordinates {(100,0.4687)(200,0.4732)(300,0.4741)(500,0.4742)(1000,0.4707)(1500,0.4683)(2000,0.4651)};
 \addplot[cD, mark=diamond*] coordinates {(100,0.4696)(200,0.4741)(300,0.4737)(500,0.4719)(1000,0.4653)(1500,0.4621)(2000,0.4599)};
-\legend{31,63,127,255}
+\legend{leaves:,31,63,127,255}
 \end{axis}
-\end{tikzpicture}\hfill
+\end{tikzpicture}\hspace{1.2cm}
 \begin{tikzpicture}
-\begin{axis}[rep, width=2.95cm, title={(b) Train vs.\ validation},
-  ybar=0pt, bar width=5.5pt, symbolic x coords={31,63,127,255}, xtick=data,
-  ymin=0.4, ymax=0.79, ytick={0.4,0.5,0.6,0.7}, xlabel={leaves (best tree count)},
+\begin{axis}[rep, width=6.8cm, height=4.0cm, title={(b) Train vs.\ validation (numbers = val/train)},
+  ybar=0pt, bar width=11pt, symbolic x coords={31,63,127,255}, xtick=data,
+  ymin=0.4, ymax=0.79, ytick={0.4,0.5,0.6,0.7}, xlabel={leaves (at best tree count)},
   enlarge x limits=0.18, xmajorgrids=false,
+  legend style={at={(0.02,0.98)}, anchor=north west}, legend columns=2,
   every axis plot/.append style={line width=0.4pt}]
 \addplot[fill=cB!55, draw=cB] coordinates {(31,0.6243)(63,0.5893)(127,0.7174)(255,0.6961)};
 \addplot[fill=cA!60, draw=cA] coordinates {(31,0.4749)(63,0.4744)(127,0.4742)(255,0.4741)};
-\node[font=\tiny, anchor=south] at (axis cs:31,0.632) {.76};
-\node[font=\tiny, anchor=south] at (axis cs:63,0.597) {.81};
-\node[font=\tiny, anchor=south] at (axis cs:127,0.725) {.66};
-\node[font=\tiny, anchor=south] at (axis cs:255,0.704) {.68};
+\legend{train folds, validation fold}
+\node[font=\scriptsize, anchor=south] at (axis cs:31,0.632) {.76};
+\node[font=\scriptsize, anchor=south] at (axis cs:63,0.597) {.81};
+\node[font=\scriptsize, anchor=south] at (axis cs:127,0.725) {.66};
+\node[font=\scriptsize, anchor=south] at (axis cs:255,0.704) {.68};
 \end{axis}
-\end{tikzpicture}\hfill
+\end{tikzpicture}
+
+\vspace{4pt}
 \begin{tikzpicture}
-\begin{axis}[rep, width=3.25cm, title={(c) DEV vs.\ trees, TRAIN-only fit},
+\begin{axis}[rep, width=6.8cm, height=4.0cm, title={(c) DEV vs.\ trees, TRAIN-only fit},
   xmode=log, log basis x=10, xtick={100,250,500,1000,2000}, xticklabels={100,250,500,1k,2k},
   ymin=0.448, ymax=0.49, ytick={0.45,0.46,0.47,0.48,0.49},
   yticklabel style={/pgf/number format/fixed,/pgf/number format/precision=2},
-  xlabel={trees (63 leaves, lr 0.0125)},
+  xlabel={trees (63 leaves, lr 0.0125)}, ylabel={nDCG@10},
   legend style={at={(0.98,0.03)}, anchor=south east}]
 \addplot[cC, mark=*] coordinates {(100,0.4532)(250,0.4672)(500,0.4781)(750,0.4813)(1000,0.4829)(1500,0.4841)(2000,0.4845)};
 \addplot[cA, mark=square*, dashed] coordinates {(500,0.4694)(1000,0.4752)(1500,0.4768)(2000,0.4771)};
 \legend{DEV, 5-fold CV}
 \end{axis}
-\end{tikzpicture}\hfill
+\end{tikzpicture}\hspace{1.2cm}
 \begin{tikzpicture}
-\begin{axis}[rep, width=3.25cm, title={(d) Leaderboard per upload},
-  xmin=0.5, xmax=14.5, xtick={1,4,9,14}, ymin=0.3, ymax=0.74, ytick={0.3,0.4,0.5,0.6,0.7},
+\begin{axis}[rep, width=6.8cm, height=4.0cm, title={(d) Leaderboard per upload},
+  xmin=0.3, xmax=23.7, xtick={1,5,10,15,20,23}, ymin=0.3, ymax=0.75, ytick={0.3,0.4,0.5,0.6,0.7},
   xlabel={upload number}]
-\addplot[cB, mark=*] coordinates {(1,0.4845)(2,0.4928)(3,0.4963)(4,0.5381)(5,0.5331)(6,0.6447)(7,0.5514)(8,0.6639)(9,0.6200)(10,0.6518)(11,0.6494)(12,0.6534)(13,0.6811)};
-\addplot[cA, mark=square*] coordinates {(1,0.3533)(2,0.3682)(3,0.3680)(4,0.3528)(5,0.3579)(6,0.3603)(7,0.3629)(8,0.3688)(9,0.3809)(10,0.3884)(11,0.3905)(12,0.3919)(13,0.3924)};
-\addplot[cB, only marks, mark=*, mark options={fill=white}] coordinates {(14,0.7079)};
-\draw[gray, dashed, line width=0.6pt] (axis cs:3.5,0.3) -- (axis cs:3.5,0.74);
-\node[font=\tiny, anchor=north west, align=left, gray!50!black, inner sep=1pt] at (axis cs:3.6,0.735) {DEV in training $\rightarrow$};
-\node[font=\tiny\bfseries, cB!85!black, anchor=north] at (axis cs:10.3,0.625) {Track B (DEV)};
-\node[font=\tiny\bfseries, cA!85!black, anchor=south] at (axis cs:9.5,0.405) {Track C2 (hidden)};
+\addplot[cB, mark=*] coordinates {(1,0.4845)(2,0.4841)(3,0.4884)(4,0.4798)(5,0.4928)(6,0.4963)(7,0.5381)(8,0.5786)(9,0.4735)(10,0.5331)(11,0.6447)(12,0.5514)(13,0.6089)(14,0.6639)(15,0.6200)(16,0.6737)(17,0.6786)(18,0.6518)(19,0.6780)(20,0.6494)(21,0.6534)(22,0.6811)(23,0.7079)};
+\addplot[cA, mark=square*] coordinates {(1,0.3533)(2,0.3533)(3,0.3491)(4,0.3534)(5,0.3682)(6,0.3680)(7,0.3528)(8,0.3387)(9,0.3535)(10,0.3579)(11,0.3603)(12,0.3629)(13,0.3631)(14,0.3688)(15,0.3809)(16,0.3775)(17,0.3804)(18,0.3884)(19,0.3872)(20,0.3905)(21,0.3919)(22,0.3924)(23,0.3906)};
+\addplot[cB, only marks, mark=*, mark size=2.4pt, mark options={fill=white}] coordinates {(23,0.7079)};
+\addplot[cA, only marks, mark=square*, mark size=2.4pt, mark options={fill=white}] coordinates {(23,0.3906)};
+\node[font=\scriptsize, anchor=south east, inner sep=1pt] at (axis cs:23,0.715) {shipped 0.708};
+\node[font=\scriptsize, anchor=north east, inner sep=1pt] at (axis cs:23.2,0.385) {0.391};
+\node[font=\scriptsize\bfseries, cB!85!black, anchor=south] at (axis cs:6,0.585) {Track B (DEV)};
+\node[font=\scriptsize\bfseries, cA!85!black, anchor=south] at (axis cs:8,0.395) {Track C2 (hidden)};
 \end{axis}
 \end{tikzpicture}
-\caption{In (b) and (d), orange = data the model was fit on, blue = data it never saw. (a)--(b) Grouped 5-fold CV on TRAIN; curves in (a) are leaf counts, numbers on (b) are val/train ratios. (c) A LambdaMART fit on TRAIN only, scored on DEV after the choice was made, next to its CV estimate. (d) Real leaderboard scores of my LambdaMART uploads in time order (14 = shipped file; its C2 score is not shown).}
+\caption{Orange = data the model was fit on, blue = data it never saw. (a)--(b) Grouped 5-fold CV on TRAIN. (c) A TRAIN-only LambdaMART scored on DEV, next to its CV estimate. (d) Leaderboard scores of my 23 distinct LambdaMART uploads in time order (23 = shipped file).}
 \label{fig:cv}
 \end{figure}
 
@@ -330,56 +318,34 @@ lr / leaves / min leaf / cols & trees & val nDCG@10 & train & ratio\\
 \textbf{0.0125 / 63 / 500 / 0.5} & \textbf{2000} & $\mathbf{0.4771\pm.0068}$ & 0.626 & 0.76\\
 \bottomrule
 \end{tabular}
-\captionof{table}{Grouped 5-fold CV on TRAIN, at each setting's best tree count ($\pm$ = std over folds). The orange row is the same 255-leaf model left to 2{,}000 trees.}
+\captionof{table}{Grouped 5-fold CV on TRAIN, at each setting's best tree count. Orange row: the 255-leaf model left to 2{,}000 trees.}
 \label{tab:cv}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.505\textwidth}
 \vspace{0pt}
 \textbf{What the gap shows.}
 \begin{itemize}
-\item \textbf{Validation is flat; training is not.} Every tree shape peaks at 0.474--0.477 (Fig.~\ref{fig:cv}a). Bigger trees only raise the training score: 255 leaves reach 0.944 on the training folds while validation \emph{falls} to 0.460. Extra capacity memorises queries.
-\item \textbf{Big trees need few rounds:} 255 leaves peak at 200 trees, 31 leaves at 1{,}000.
-\item \textbf{A lower learning rate helps a little:} 0.05$\to$0.025 improved all 5 folds (+0.0025), 0.0125 added +0.0005. Both are below the fold std ($\approx$0.007).
-\item \textbf{DEV agrees with CV for a model that never saw DEV:} 0.4845 vs.\ 0.4771, with the same curve shape (Fig.~\ref{fig:cv}c). The first pairwise model too: 0.4364 on DEV, 0.4311 on the held-out split (Track~P).
-\item \textbf{Once DEV is in training, its score means little.} Over my uploads (Fig.~\ref{fig:cv}d) Track~B rose by 0.20, the hidden C2 test only from 0.353 to 0.392. My estimate for new clean queries stays \textbf{$\approx$0.477}.
+\item \textbf{Validation is flat; training is not.} Every tree shape peaks at 0.474--0.477. Bigger trees only raise the training score: 255 leaves reach 0.944 on training folds while validation \emph{falls} to 0.460.
+\item \textbf{DEV agrees with CV} for a model that never saw DEV: 0.4845 vs.\ 0.4771, with the same curve shape (Fig.~\ref{fig:cv}c).
+\item \textbf{Once DEV is in training, its score means little.} Over my uploads Track~B rose by 0.22 (0.4845 to 0.7079), but the hidden C2 score only from 0.353 to 0.391 (Fig.~\ref{fig:cv}d). My estimate for new clean queries stays \textbf{$\approx$0.477}.
 \end{itemize}
 \end{minipage}
 
 % =====================================================================
 \section{Regularisation choices and the shipped LambdaMART}
-Clean CV says more capacity does not help unseen queries, so I spent it on \textbf{robustness}: Track~C2 runs the same file on five changed copies of the held-out data. A clue to those changes: Gaussian noise of $0.05\times$ each feature's std drops the plain TRAIN-only model on DEV from 0.4845 to 0.3450, close to its real C2 score of 0.3533. My responses:
+Since more capacity does not help unseen queries, I spent it on \textbf{robustness}: Track~C2 scores the model on five changed copies of the held-out data. Adding small noise to DEV drops the plain TRAIN-only model from 0.4845 to 0.3450, close to its real C2 score (0.3533). My responses:
 \begin{itemize}
 \item \textbf{Usual tree regularisation:} learning rate falling 0.05$\to$0.015, column sample 0.5, row bagging 0.9, L2 0.1, at least 20--40 rows per leaf, tree count fixed in advance.
-\item \textbf{Scale-free columns.} Each feature also gets its \emph{percentile inside the query} (unchanged by any increasing transform, e.g.\ $\log$ or $\times10$) and its \emph{z-score inside the query} (unchanged by shift or positive scaling): 408 columns, rebuilt by \texttt{rerank\_with\_ltr} at scoring time.
-\item \textbf{Corrupted training copies:} Gaussian or multiplicative noise, $\log(1+|x|)$, cells set to 0 or missing, the five fields of a feature group shuffled, one or two fields zeroed, per-query rescaling. Labels stay the same; each copy gets new query ids.
+\item \textbf{Scale-free columns:} each feature also gets its percentile and z-score \emph{inside the query} (408 columns). These do not change if a feature is rescaled.
+\item \textbf{Corrupted training copies:} noise, $\log$ view, zeroed or missing cells, shuffled fields, per-query rescaling; labels stay the same.
 \end{itemize}
 
-\begin{minipage}[t]{0.40\textwidth}
-\vspace{0pt}
-\centering\footnotesize
-\begin{tabular}{@{}lcc@{}}
-\toprule
-Probe (unseen TRAIN queries) & clean & corrupted\\
-\midrule
-raw + percentile columns & 0.4727 & 0.3620\\
-\quad + within-query z-score & \textbf{0.4836} & \textbf{0.4187}\\
-\midrule
-no corrupted copies & \textbf{0.5653} & 0.3465\\
-\quad + corrupted copies & 0.5222 & \textbf{0.4558}\\
-\bottomrule
-\end{tabular}
-\captionof{table}{Two small probes (different sizes; compare within a block). Corrupted = mean over 7--8 kinds of corruption. DEV not read.}
-\label{tab:probe}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.57\textwidth}
-\vspace{0pt}
-Table~\ref{tab:probe} shows the trade-off. The z-score columns help on both clean and corrupted data. The corrupted copies \textbf{cost 0.043 on clean data but gain 0.109 under corruption}. A column sample of 0.5 instead of 0.8 also lost less when 10\% of features were zeroed ($-0.022$ vs.\ $-0.024$), at the same clean score. Since clean CV showed leaf count barely matters, it was set by these probes, where larger trees did better under corruption; the shipped file uses 127 leaves. During the staged run below, the real C2 score rose from 0.381 to 0.392 (uploads 9--13, Fig.~\ref{fig:cv}d).
-\end{minipage}
+During the staged run below, the real C2 score rose from 0.381 to 0.392 (uploads 15--22).
 
 \begin{figure}[h]
 \centering
-\begin{tikzpicture}[font=\scriptsize, x=0.0059cm]
-  \def\seg#1#2#3{\fill[#3] (#1,0) rectangle (#2,0.42); \draw[white, line width=0.6pt] (#2,0) -- (#2,0.42);}
+\begin{tikzpicture}[font=\footnotesize, x=0.0059cm]
+  \def\seg#1#2#3{\fill[#3] (#1,0) rectangle (#2,0.6); \draw[white, line width=0.6pt] (#2,0) -- (#2,0.6);}
   \seg{0}{1200}{cA!45}
   \seg{1200}{2050}{cB!55}
   \seg{2050}{2170}{cC!55}
@@ -387,18 +353,18 @@ Table~\ref{tab:probe} shows the trade-off. The z-score columns help on both clea
   \seg{2370}{2395}{cC!55}
   \seg{2395}{2545}{cB!55}
   \seg{2545}{2835}{cC!55}
-  \draw[gray!70] (0,0) rectangle (2835,0.42);
-  \node at (600,0.21) {clean + mild noise, log view, shuffled fields, zeroed cells};
-  \node at (1625,0.21) {only corrupted, rising strength};
-  \node at (2690,0.21) {clean};
+  \draw[gray!70] (0,0) rectangle (2835,0.6);
+  \node at (600,0.3) {clean + mild corruption};
+  \node at (1625,0.3) {only corrupted};
+  \node at (2690,0.3) {clean};
   \foreach \x in {0,1200,2050,2370,2545,2835} { \draw[gray] (\x,0) -- (\x,-0.08); \node[anchor=north, inner sep=1pt] at (\x,-0.08) {\x}; }
-  \node[anchor=south, inner sep=1pt] at (600,0.44) {lr 0.05};
-  \node[anchor=south, inner sep=1pt] at (1625,0.44) {lr 0.03, missing cells, 1--2 fields zeroed};
-  \node[anchor=south, inner sep=1pt] at (2270,0.44) {lr 0.02};
-  \node[anchor=south, inner sep=1pt] at (2690,0.44) {lr 0.015};
-  \node[anchor=west] at (2870,0.21) {trees};
+  \node[anchor=south, inner sep=1pt] at (600,0.62) {lr 0.05};
+  \node[anchor=south, inner sep=1pt] at (1625,0.62) {lr 0.03};
+  \node[anchor=south, inner sep=1pt] at (2270,0.62) {lr 0.02};
+  \node[anchor=south, inner sep=1pt] at (2690,0.62) {lr 0.015};
+  \node[anchor=west] at (2870,0.3) {trees};
 \end{tikzpicture}
-\caption{How the 2{,}835 shipped trees were grown: 11 stages, each continuing from the last file, all on TRAIN + DEV. Orange stages use only corrupted copies; green stages use only clean rows; the last 250 trees are clean.}
+\caption{How the 2{,}835 shipped trees were grown, all on TRAIN + DEV. Orange stages use only corrupted copies, green stages only clean rows; the last 250 trees are clean.}
 \label{fig:stages}
 \end{figure}
 
@@ -408,21 +374,19 @@ Table~\ref{tab:probe} shows the trade-off. The z-score columns help on both clea
 \begin{tikzpicture}[font=\scriptsize, node distance=0.28cm,
   st/.style={draw=cD!75!black, fill=cD!7, rounded corners=2pt, align=left, text width=2.93cm, inner sep=3pt, minimum height=1.3cm},
   arr/.style={-{Stealth[length=4pt]}, gray!80, line width=0.7pt}]
-  \node[st] (a) {\textbf{Read} train + vali, any width $D$; skip \texttt{\#} comments; values $>10^{30}$ become missing};
+  \node[st] (a) {\textbf{Read} train + vali, any number of features $D$};
   \node[st, right=of a] (b) {\textbf{Add views:} within-query percentile and z-score ($3D$ columns)};
-  \node[st, right=of b] (c) {\textbf{Size rules} pick leaves, leaf size, column sample, L2 from $n$ rows and $D$};
-  \node[st, right=of c] (d) {\textbf{Up to 6 models}: \{views, raw\} $\times$ \{rule, $2\times$ leaves, $\tfrac12$ leaves, fewer columns\}; each early-stops on vali, then refits on train + vali};
-  \node[st, right=of d] (e) {\textbf{Average} into one LightGBM file: all trees in order, leaf values divided by $k$};
+  \node[st, right=of b] (c) {\textbf{Size rules} pick leaves, leaf size, column sample, L2 from rows $n$ and $D$};
+  \node[st, right=of c] (d) {\textbf{Up to 6 models} with different tree shapes; each early-stops on vali, then refits on train + vali};
+  \node[st, right=of d] (e) {\textbf{Average} them into one LightGBM file};
   \foreach \u/\v in {a/b,b/c,c/d,d/e} \draw[arr] (\u) -- (\v);
 \end{tikzpicture}
 \end{center}
-An MSLR model cannot be used on the hidden datasets (different, unnamed features, up to $\sim$300), so the recipe must carry \emph{how} to train. With $n$ training rows and $d$ input columns: leaves $=\mathrm{clip}(2^{\mathrm{round}(\log_2(\sqrt n/16))}-1,\,7,\,63)$; min leaf $=\mathrm{clip}(n/4000,\,20,\,200)$; column sample $=\mathrm{clip}(1-0.15\log_2(d/32),\,0.5,\,1)$; L2 $=10$ if $n<50{,}000$, else 1; learning rate 0.05. Small data gets small, strongly regularised trees, and nothing hard-codes 136 features. A cost model based only on data size decides how many models fit in a 15-minute budget (staff limit: 20), so the output depends only on the data and the seed. On 5 benchmark-like tasks cut from TRAIN, an earlier single-model version of these rules averaged 0.5011 vs.\ 0.4882 for the starter recipe, and the refit helped on all 5. A full run on MSLR TRAIN + DEV (958k rows) took 313\,s and 4.0\,GB; a synthetic file at the stated limit (500k rows, 300 features) took 353\,s and 5.2\,GB.
+An MSLR model cannot be used on the hidden datasets (different, unnamed features), so the recipe must carry \emph{how} to train. Settings come from the data size: small data gets small, strongly regularised trees (e.g.\ leaves $=\mathrm{clip}(2^{\mathrm{round}(\log_2(\sqrt n/16))}-1,\,7,\,63)$), and nothing assumes 136 features. A time budget of 15 minutes (limit: 20) decides how many models are trained. On 5 benchmark-like tasks cut from TRAIN, an earlier single-model version averaged 0.5011 vs.\ 0.4882 for the starter recipe. A synthetic file at the stated limit (500k rows, 300 features) took 353\,s.
 
 % =====================================================================
 \section{Final configuration and what I traded off}
-\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. For expected generalisation I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079, but that is in-training; my estimate for unseen clean queries is the CV value of about 0.477 (0.4845 on DEV for a TRAIN-only fit). Second, \emph{some clean accuracy}: in the probe the corrupted copies cost about 0.04 on clean data and gain about 0.11 under corruption, which is what Track~C2 measures. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy, missing or rescaled features, so I did not ship it. For Track~C1 I used rules and an average of several tree shapes, so no single MSLR-tuned constant decides the result on data I cannot see.
-
-\textbf{Correctness of the hand-written parts.} The three fusion functions match the worked examples in their docstrings. \texttt{ranknet\_loss([2,0],[0,0])} gives $0.410038$, and a score gap of $-2000$ gives a loss of $2000$ instead of overflowing. \texttt{make\_pairs} returns only same-query, strictly ordered pairs, better document first, capped per query. One \texttt{pairwise\_step} raises $s_i-s_j$, and two runs with the same seed give identical weights. The training splits of every submitted model are:
+\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079, but my estimate for unseen clean queries is the CV value of about 0.477. Second, \emph{some clean accuracy}: the corrupted copies aim at noisy, missing or rescaled features, which is what Track~C2 measures, rather than at clean DEV. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
 
 \begin{center}
 \footnotesize
@@ -441,6 +405,7 @@ LambdaMART \texttt{model.txt} & TRAIN + DEV & 5-fold CV on TRAIN; tree count and
 % =====================================================================
 \section{AI use and code provenance}
 \textbf{AI use.} I used Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) to read the starter code, write the submission, run the experiments and draft this report. I chose the fusion channels, the LambdaMART settings and the recipe rules, and I checked the numbers. I am responsible for the submission.
+\newline
 \textbf{Code provenance.} No external code was copied. RRF follows Cormack, Clarke and Buettcher (SIGIR 2009); CombSUM and CombMNZ follow Fox and Shaw (TREC-2, 1994); RankNet follows Burges et al.\ (ICML 2005); the $|\Delta\mathrm{nDCG}|$ weights follow Burges (MSR-TR-2010-82) and are used only outside the graded \texttt{ranknet\_loss}. LambdaMART is LightGBM's \texttt{lambdarank}. Libraries: NumPy, LightGBM, PyTorch.
 
 \end{document}
