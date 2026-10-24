@@ -131,7 +131,7 @@ The submission has four parts (Figure~\ref{fig:pipe}). Fusion and the two neural
   % components
   \foreach \i/\c/\t in {
     0/cA/{\textbf{1. Rank fusion} (\texttt{fusion.py})\\ Normalise each base ranker's scores per query, then add BM25, BM25-title and LMIR.DIR (CombSUM).},
-    1/cC/{\textbf{2. Pointwise / pairwise MLP}\\ Same small network, two losses: squared error, and RankNet on document pairs.\\ \textit{Trained on TRAIN.}},
+    1/cC/{\textbf{2. Pointwise / pairwise MLP}\\ Two MLPs, two losses: squared error (64 units), and RankNet on document pairs ($3\times256$ units).\\ \textit{Trained on TRAIN.}},
     2/cB/{\textbf{3. LambdaMART} (\texttt{model.txt})\\ LightGBM on the 136 features plus extra per-query versions of them.\\ \textit{Trained on TRAIN + DEV.}},
     3/cD/{\textbf{4. Recipe} (\texttt{recipe.py})\\ Trains LambdaMART on any new dataset, choosing settings from the data size.}}
   {
@@ -202,7 +202,7 @@ Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ & shipp
 
 \begin{minipage}[t]{0.44\textwidth}
 \vspace{0pt}
-\textbf{Pairwise training.} Pairs come from one query only and ties are dropped. Each batch holds 64 queries with up to 4000 pairs each and each pair is weighted by how much nDCG@10 would change if the two documents swapped. The graded \texttt{ranknet\_loss} itself stays plain and unweighted. Both networks use Adam and early-stop on a fixed tenth of TRAIN; DEV is scored once, at the end.
+\textbf{Pairwise training.} Pairs come from one query only and ties are dropped. Each batch holds 64 queries with up to 4000 pairs each and each pair is weighted by how much nDCG would change if the two documents swapped. The graded \texttt{ranknet\_loss} itself stays plain and unweighted. Both networks use Adam and early-stop on a fixed tenth of TRAIN; DEV is scored once, at the end.
 
 \textbf{LambdaMART} uses the same idea with trees: a swap near the top of the ranking gets a large push, a swap far down almost none. Each new tree is fit to these pushes.
 \end{minipage}\hfill
@@ -234,7 +234,7 @@ Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ & shipp
 
 % =====================================================================
 \section{Cross-validation and the generalisation gap}\label{sec:cv}
-I cannot see the heldout queries so I measure the gap with \textbf{grouped 5-fold cross-validation inside TRAIN}: all documents of a query go to the same fold, each run trains on 4800 queries and validates on 1200. Each model is scored at fixed tree counts, so \textbf{nothing is early stopped on the fold I report}. I report the mean $\pm$ std over the five validation folds and the val/train ratio.
+I cannot see the held-out queries, so I measure the gap with \textbf{grouped 5-fold cross-validation inside TRAIN}: all documents of a query go to the same fold, each run trains on 4800 queries and validates on 1200. Each model is scored at fixed tree counts, so \textbf{nothing is early stopped on the fold I report}. I report the mean $\pm$ std over the five validation folds and the val/train ratio.
 
 \begin{figure}[h]
 \centering
@@ -333,7 +333,7 @@ lr / leaves / min leaf / cols & trees & val nDCG@10 & train & ratio\\
 
 % =====================================================================
 \section{Regularisation choices and the shipped LambdaMART}
-Since more capacity does not help unseen queries, I spent it on \textbf{robustness}: Track~C2 scores the model on five changed copies of the heldout data. Adding small noise to DEV drops the plain TRAIN-only model from 0.4845 to 0.3450, close to its real C2 score (0.3533). My responses:
+Since more capacity does not help unseen queries, I spent it on \textbf{robustness}: Track~C2 scores the model on five changed copies of the held-out data. Adding small noise to DEV drops the plain TRAIN-only model from 0.4845 to 0.3450, close to its real C2 score (0.3533). My responses:
 \begin{itemize}
 \item \textbf{Usual tree regularisation:} learning rate falling 0.05$\to$0.015, column sample 0.5, row bagging 0.9, L2 0.1, at least 20--40 rows per leaf, tree count fixed in advance.
 \item \textbf{Scale-free columns:} each feature also gets its percentile and z-score \emph{inside the query} (408 columns). These do not change if a feature is rescaled.
@@ -377,7 +377,7 @@ During the staged run below, the real C2 score rose from 0.381 to 0.392 (uploads
   \node[st] (a) {\textbf{Read} train + vali, any number of features $D$};
   \node[st, right=of a] (b) {\textbf{Add views:} within-query percentile and z-score ($3D$ columns)};
   \node[st, right=of b] (c) {\textbf{Size rules} pick leaves, leaf size, column sample, L2 from rows $n$ and $D$};
-  \node[st, right=of c] (d) {\textbf{Up to 6 models} with different tree shapes; each early-stops on vali, then refits on train + vali};
+  \node[st, right=of c] (d) {\textbf{Up to 6 models}, half on raw features and half with the views, in different tree shapes; each early-stops on vali, then refits on train + vali};
   \node[st, right=of d] (e) {\textbf{Average} them into one LightGBM file};
   \foreach \u/\v in {a/b,b/c,c/d,d/e} \draw[arr] (\u) -- (\v);
 \end{tikzpicture}
@@ -386,7 +386,7 @@ An MSLR model cannot be used on the hidden datasets (different, unnamed features
 
 % =====================================================================
 \section{Final configuration and what I traded off}
-\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079 but my estimate for unseen clean queries is the CV value of about 0.477. Second, I tuned for \emph{robustness rather than clean DEV}: the corrupted copies and within-query columns target noisy, missing or rescaled features, which is what Track~C2 measures; over those uploads C2 rose from 0.381 to 0.392. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
+\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079 but my estimate for unseen clean queries is the CV value of about 0.477. Second, I tuned for \emph{robustness rather than clean DEV}: the corrupted copies and within-query columns target noisy, missing or rescaled features, which is what Track~C2 measures; over uploads 15--22, C2 rose from 0.381 to 0.392. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
 
 \begin{center}
 \normalsize\renewcommand{\arraystretch}{1.45}
@@ -409,5 +409,7 @@ I used Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) to read the st
 % =====================================================================
 \section{Code provenance}
 No external code was copied. RRF follows Cormack, Clarke and Buettcher (SIGIR 2009); CombSUM and CombMNZ follow Fox and Shaw (TREC-2, 1994); RankNet follows Burges et al.\ (ICML 2005); the $|\Delta\mathrm{nDCG}|$ weights follow Burges (MSR-TR-2010-82) and are used only outside the graded \texttt{ranknet\_loss}. LambdaMART is LightGBM's \texttt{lambdarank}. Libraries: NumPy, LightGBM, PyTorch.
+
+\textbf{GitHub:} \url{https://github.com/AdityaCodeSphere123/COL764-Assignment3/}
 
 \end{document}
