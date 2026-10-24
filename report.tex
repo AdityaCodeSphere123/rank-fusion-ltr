@@ -112,22 +112,22 @@ The submission has four parts (Figure~\ref{fig:pipe}). Fusion and the two neural
 
 \begin{figure}[h]
 \centering
-\begin{tikzpicture}[font=\scriptsize,
-  comp/.style={draw=#1!75!black, fill=#1!7, rounded corners=2pt, align=left, text width=3.92cm,
-               inner sep=3pt, minimum height=1.4cm, anchor=north west},
+\begin{tikzpicture}[font=\small,
+  comp/.style={draw=#1!75!black, fill=#1!7, rounded corners=2pt,
+               inner sep=4pt, anchor=north west},
   trk/.style={draw=#1!75!black, fill=#1!22, rounded corners=6pt, align=center, inner sep=2pt,
               text width=3.92cm, font=\scriptsize\bfseries, anchor=north west},
   arr/.style={-{Stealth[length=4pt]}, gray!80, line width=0.7pt}]
   % data bar: 10,000 queries = 17.9 cm
   \def\W{17.75}
-  \fill[cA!25] (0,0) rectangle (0.6*\W,0.42);
-  \fill[cB!25] (0.6*\W,0) rectangle (0.8*\W,0.42);
-  \fill[gray!25] (0.8*\W,0) rectangle (\W,0.42);
-  \draw[gray!70] (0,0) rectangle (\W,0.42);
-  \node at (0.3*\W,0.21) {\textbf{TRAIN}: 6{,}000 queries, 723k rows, labels 0--4};
-  \node at (0.7*\W,0.21) {\textbf{DEV}: 2{,}000 q, 235k rows};
-  \node at (0.9*\W,0.21) {\textbf{Held-out}: never seen};
-  \node[anchor=south west, inner sep=1pt] at (0,0.44) {\textbf{MSLR-WEB10K, Fold 1} \;(136 numeric features per query--document pair)};
+  \fill[cA!25] (0,0) rectangle (0.6*\W,0.6);
+  \fill[cB!25] (0.6*\W,0) rectangle (0.8*\W,0.6);
+  \fill[gray!25] (0.8*\W,0) rectangle (\W,0.6);
+  \draw[gray!70] (0,0) rectangle (\W,0.6);
+  \node at (0.3*\W,0.3) {\textbf{TRAIN}: 6{,}000 queries, 723k rows, labels 0--4};
+  \node at (0.7*\W,0.3) {\textbf{DEV}: 2{,}000 q, 235k rows};
+  \node at (0.9*\W,0.3) {\textbf{Held-out}: never seen};
+  \node[anchor=south west, inner sep=1pt] at (0,0.62) {\textbf{MSLR-WEB10K, Fold 1} \;(136 numeric features per query--document pair)};
   % components
   \foreach \i/\c/\t in {
     0/cA/{\textbf{1. Rank fusion} (\texttt{fusion.py})\\ Normalise each base ranker's scores per query, then add BM25, BM25-title and LMIR.DIR (CombSUM).},
@@ -135,9 +135,9 @@ The submission has four parts (Figure~\ref{fig:pipe}). Fusion and the two neural
     2/cB/{\textbf{3. LambdaMART} (\texttt{model.txt})\\ LightGBM on the 136 features plus extra per-query versions of them.\\ \textit{Trained on TRAIN + DEV.}},
     3/cD/{\textbf{4. Recipe} (\texttt{recipe.py})\\ Trains LambdaMART on any new dataset, choosing settings from the data size.}}
   {
-    \node[comp=\c] (c\i) at ({\i*(\W+0.24)/4},-0.32) {\t};
+    \node[comp=\c] (c\i) at ({\i*(\W+0.24)/4},-0.42) {\parbox[t][2.6cm][t]{3.82cm}{\raggedright \t}};
   }
-  \foreach \i in {0,1,2,3} { \draw[arr] ($(c\i.north)+(0,0.16)$) -- (c\i.north); }
+  \foreach \i in {0,1,2,3} { \draw[arr] ($(c\i.north)+(0,0.2)$) -- (c\i.north); }
 \end{tikzpicture}
 \caption{The four parts of the submission.}
 \label{fig:pipe}
@@ -188,7 +188,7 @@ All choices were made on the 6000 TRAIN queries: RRF with $c$ from 1 to 500, Com
 % =====================================================================
 \section{Pointwise, Pairwise and LambdaMART}
 \begin{center}
-\footnotesize
+\normalsize\renewcommand{\arraystretch}{1.35}
 \begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
 \toprule
  & \textbf{Pointwise} & \textbf{Pairwise (RankNet)} & \textbf{LambdaMART}\\
@@ -312,13 +312,13 @@ lr / leaves / min leaf / cols & trees & val nDCG@10 & train & ratio\\
 0.05 / 63 / 100 / 0.8 & 300 & $0.4744\pm.0063$ & 0.589 & \textbf{0.81}\\
 0.05 / 127 / 100 / 0.8 & 500 & $0.4742\pm.0077$ & 0.717 & 0.66\\
 0.05 / 255 / 100 / 0.8 & 200 & $0.4741\pm.0059$ & 0.696 & 0.68\\
-\textcolor{cB}{0.05 / 255 / 100 / 0.8} & \textcolor{cB}{2000} & \textcolor{cB}{$0.4599$} & \textcolor{cB}{0.944} & \textcolor{cB}{0.49}\\
+0.05 / 255 / 100 / 0.8 & 2000 & $0.4599$ & 0.944 & 0.49\\
 0.05 / 63 / 500 / 0.5 & 500 & $0.4741\pm.0068$ & 0.623 & 0.76\\
 0.025 / 63 / 500 / 0.5 & 1000 & $0.4766\pm.0070$ & 0.625 & 0.76\\
 \textbf{0.0125 / 63 / 500 / 0.5} & \textbf{2000} & $\mathbf{0.4771\pm.0068}$ & 0.626 & 0.76\\
 \bottomrule
 \end{tabular}
-\captionof{table}{Grouped 5-fold CV on TRAIN, at each setting's best tree count. Orange row: the 255-leaf model left to 2{,}000 trees.}
+\captionof{table}{Grouped 5-fold CV on TRAIN, at each setting's best tree count. The 2{,}000-tree row is the 255-leaf model left to grow.}
 \label{tab:cv}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.505\textwidth}
@@ -389,7 +389,7 @@ An MSLR model cannot be used on the hidden datasets (different, unnamed features
 \textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079, but my estimate for unseen clean queries is the CV value of about 0.477. Second, \emph{some clean accuracy}: the corrupted copies aim at noisy, missing or rescaled features, which is what Track~C2 measures, rather than at clean DEV. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
 
 \begin{center}
-\footnotesize
+\normalsize\renewcommand{\arraystretch}{1.45}
 \begin{tabularx}{\textwidth}{@{}ll>{\raggedright\arraybackslash}Xl@{}}
 \toprule
 Model & Trained on & Tuned on & Early stopping\\
@@ -403,9 +403,11 @@ LambdaMART \texttt{model.txt} & TRAIN + DEV & 5-fold CV on TRAIN; tree count and
 \end{center}
 
 % =====================================================================
-\section{AI use and code provenance}
-\textbf{AI use.} I used Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) to read the starter code, write the submission, run the experiments and draft this report. I chose the fusion channels, the LambdaMART settings and the recipe rules, and I checked the numbers. I am responsible for the submission.
-\newline
-\textbf{Code provenance.} No external code was copied. RRF follows Cormack, Clarke and Buettcher (SIGIR 2009); CombSUM and CombMNZ follow Fox and Shaw (TREC-2, 1994); RankNet follows Burges et al.\ (ICML 2005); the $|\Delta\mathrm{nDCG}|$ weights follow Burges (MSR-TR-2010-82) and are used only outside the graded \texttt{ranknet\_loss}. LambdaMART is LightGBM's \texttt{lambdarank}. Libraries: NumPy, LightGBM, PyTorch.
+\section{AI-use disclosure}
+I used Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) to read the starter code, write the submission, run the experiments and draft this report. I chose the fusion channels, the LambdaMART settings and the recipe rules, and I checked the numbers. I am responsible for the submission.
+
+% =====================================================================
+\section{Code provenance}
+No external code was copied. RRF follows Cormack, Clarke and Buettcher (SIGIR 2009); CombSUM and CombMNZ follow Fox and Shaw (TREC-2, 1994); RankNet follows Burges et al.\ (ICML 2005); the $|\Delta\mathrm{nDCG}|$ weights follow Burges (MSR-TR-2010-82) and are used only outside the graded \texttt{ranknet\_loss}. LambdaMART is LightGBM's \texttt{lambdarank}. Libraries: NumPy, LightGBM, PyTorch.
 
 \end{document}
