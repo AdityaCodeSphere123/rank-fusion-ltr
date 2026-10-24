@@ -108,7 +108,7 @@
 \newpage
 
 \section*{Overview}
-The submission has four parts (Figure~\ref{fig:pipe}). Fusion and the two neural models are my own code; LambdaMART uses LightGBM's \texttt{lambdarank}. All numbers are nDCG@10.
+The submission has four parts (Figure~\ref{fig:pipe}). Fusion and the two neural models are my own code; LambdaMART uses LightGBM's lambdarank. All numbers are nDCG@10.
 
 \begin{figure}[h]
 \centering
@@ -202,7 +202,7 @@ Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ & shipp
 
 \begin{minipage}[t]{0.44\textwidth}
 \vspace{0pt}
-\textbf{Pairwise training.} Pairs come from one query only and ties are dropped. Each batch holds 64 queries with up to 4{,}000 pairs each, and each pair is weighted by how much nDCG@10 would change if the two documents swapped. The graded \texttt{ranknet\_loss} itself stays plain and unweighted. Both networks use Adam and early-stop on a fixed tenth of TRAIN; DEV is scored once, at the end.
+\textbf{Pairwise training.} Pairs come from one query only and ties are dropped. Each batch holds 64 queries with up to 4000 pairs each and each pair is weighted by how much nDCG@10 would change if the two documents swapped. The graded \texttt{ranknet\_loss} itself stays plain and unweighted. Both networks use Adam and early-stop on a fixed tenth of TRAIN; DEV is scored once, at the end.
 
 \textbf{LambdaMART} uses the same idea with trees: a swap near the top of the ranking gets a large push, a swap far down almost none. Each new tree is fit to these pushes.
 \end{minipage}\hfill
@@ -234,7 +234,7 @@ Model & MLP $136{\to}64{\to}1$ & MLP $136{\to}256{\to}256{\to}256{\to}1$ & shipp
 
 % =====================================================================
 \section{Cross-validation and the generalisation gap}\label{sec:cv}
-I cannot see the held-out queries, so I measure the gap with \textbf{grouped 5-fold cross-validation inside TRAIN}: all documents of a query go to the same fold, each run trains on 4{,}800 queries and validates on 1{,}200. Each model is scored at fixed tree counts, so \textbf{nothing is early-stopped on the fold I report}. I report the mean $\pm$ std over the five validation folds and the val/train ratio.
+I cannot see the heldout queries so I measure the gap with \textbf{grouped 5-fold cross-validation inside TRAIN}: all documents of a query go to the same fold, each run trains on 4800 queries and validates on 1200. Each model is scored at fixed tree counts, so \textbf{nothing is early stopped on the fold I report}. I report the mean $\pm$ std over the five validation folds and the val/train ratio.
 
 \begin{figure}[h]
 \centering
@@ -333,7 +333,7 @@ lr / leaves / min leaf / cols & trees & val nDCG@10 & train & ratio\\
 
 % =====================================================================
 \section{Regularisation choices and the shipped LambdaMART}
-Since more capacity does not help unseen queries, I spent it on \textbf{robustness}: Track~C2 scores the model on five changed copies of the held-out data. Adding small noise to DEV drops the plain TRAIN-only model from 0.4845 to 0.3450, close to its real C2 score (0.3533). My responses:
+Since more capacity does not help unseen queries, I spent it on \textbf{robustness}: Track~C2 scores the model on five changed copies of the heldout data. Adding small noise to DEV drops the plain TRAIN-only model from 0.4845 to 0.3450, close to its real C2 score (0.3533). My responses:
 \begin{itemize}
 \item \textbf{Usual tree regularisation:} learning rate falling 0.05$\to$0.015, column sample 0.5, row bagging 0.9, L2 0.1, at least 20--40 rows per leaf, tree count fixed in advance.
 \item \textbf{Scale-free columns:} each feature also gets its percentile and z-score \emph{inside the query} (408 columns). These do not change if a feature is rescaled.
@@ -386,7 +386,7 @@ An MSLR model cannot be used on the hidden datasets (different, unnamed features
 
 % =====================================================================
 \section{Final configuration and what I traded off}
-\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079, but my estimate for unseen clean queries is the CV value of about 0.477. Second, \emph{some clean accuracy}: the corrupted copies aim at noisy, missing or rescaled features, which is what Track~C2 measures, rather than at clean DEV. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
+\textbf{Fusion} is CombSUM of three min--max channels. The \textbf{pointwise} and \textbf{pairwise} networks use only TRAIN. The \textbf{LambdaMART} file has 2{,}835 trees with 127 leaves on 408 columns, fit on TRAIN + DEV with corrupted copies. I gave up two things. First, \emph{a fair DEV score}: training on DEV lifts Track~B to 0.7079 but my estimate for unseen clean queries is the CV value of about 0.477. Second, I tuned for \emph{robustness rather than clean DEV}: the corrupted copies and within-query columns target noisy, missing or rescaled features, which is what Track~C2 measures; over those uploads C2 rose from 0.381 to 0.392. The 63-leaf clean model has the best val/train ratio (0.81) at the same 0.477, but no defence against noisy or rescaled features, so I did not ship it.
 
 \begin{center}
 \normalsize\renewcommand{\arraystretch}{1.45}
@@ -404,7 +404,7 @@ LambdaMART \texttt{model.txt} & TRAIN + DEV & 5-fold CV on TRAIN; tree count and
 
 % =====================================================================
 \section{AI-use disclosure}
-I used Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) to read the starter code, write the submission, run the experiments and draft this report. I chose the fusion channels, the LambdaMART settings and the recipe rules, and I checked the numbers. I am responsible for the submission.
+I used Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) to read the starter code, write the submission, run the experiments and draft this report. I chose the fusion channels, the LambdaMART settings and the recipe rules and I checked the numbers. I am responsible for the submission.
 
 % =====================================================================
 \section{Code provenance}
