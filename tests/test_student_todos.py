@@ -1,4 +1,4 @@
-"""SELF-CHECK for the parts YOU write (hand-checkable tests of assignment Section 4.3). These FAIL until
+"""SELF-CHECK for the parts YOU write (hand-checkable tests of spec Section 4.3). These FAIL until
 your TODOs are filled in; staff run a stricter version of the same checks. Not part of the CI gate."""
 import numpy as np
 import pytest

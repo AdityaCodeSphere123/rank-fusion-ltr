@@ -6,7 +6,7 @@ from harness import leaderboard as lb
 def test_weights_sum_to_one():
     total = (lb.TRACK_A_NDCG_WEIGHT + lb.TRACK_A_MAP_WEIGHT + lb.TRACK_B_WEIGHT + lb.TRACK_P_WEIGHT
              + lb.TRACK_C1_WEIGHT + lb.TRACK_C2_WEIGHT)
-    assert abs(total - 1.0) < 1e-12  # A 10 + B 10 + P 10 + C1 35 + C2 35, no bonus (assignment Section 7)
+    assert abs(total - 1.0) < 1e-12  # A 10 + B 10 + P 10 + C1 35 + C2 35, no bonus (spec Section 7)
 
 
 def test_percentile_ties_average():

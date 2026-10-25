@@ -1,6 +1,6 @@
 # How grading works
 
-Scoring (assignment Section 7), every accuracy-bearing item percentile-ranked against the class (ties share average rank):
+Scoring (spec Section 7), every accuracy-bearing item percentile-ranked against the class (ties share average rank):
 
 | track | metric | weight |
 |---|---|---|

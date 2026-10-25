@@ -5,7 +5,7 @@ Shared, readable and unit-tested (tests/test_metrics.py) so there is no
 ambiguity about how scoring works; the same code path scores the public dev
 set and, at grading time, the withheld held-out set.
 
-Conventions (same as Assignments 1 and 2):
+Conventions (standard):
   - nDCG uses graded relevance (MSLR labels 0-4) and the (2^rel - 1) gain.
   - MAP, MRR and P@k binarise relevance: a document is relevant if its label
     is > 0.

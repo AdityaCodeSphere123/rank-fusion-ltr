@@ -1,6 +1,6 @@
 """
 harness/leaderboard.py -- combine raw metrics into the weighted leaderboard
-score defined in the assignment (Section 7). Weights sum to 100%, no bonus:
+score defined in the spec (Section 7). Weights sum to 100%, no bonus:
 
     Track A  (fusion, MSLR dev)                      10%  (nDCG@10 80% / MAP@10 20%)
   + Track B  (LTR dev accuracy, MSLR)                10%
@@ -49,7 +49,7 @@ TIE_BAND = 0.005  # Tracks A and B: metrics are rounded to this before ranking
 def _percentile_ranks(values: List[float]) -> List[float]:
     """Percentile rank in [0, 1] per value: 0 for the single lowest, 1 for the
     single highest, linear between; ties share the averaged-rank percentile; a
-    class of one maps to 1.0. Identical to Assignments 1 and 2."""
+    class of one maps to 1.0."""
     n = len(values)
     if n == 0:
         return []

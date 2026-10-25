@@ -1,6 +1,6 @@
 """
 harness/neural.py -- the scoring network and the artifact format for pointwise_model.pt / pairwise_model.pt
-(assignment Sections 4.3 and 7, Track P).
+(spec Sections 4.3 and 7, Track P).
 
 Staff load your .pt artifacts with THIS file (their own pristine copy, not yours), so:
   * the network is always a plain MLP: n_features -> hidden layers with ReLU -> 1 score;

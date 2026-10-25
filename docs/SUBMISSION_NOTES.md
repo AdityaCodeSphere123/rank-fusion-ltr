@@ -124,8 +124,5 @@ The 0.7079 is not a fair comparison because DEV rows were fit. A fairer LambdaMA
 ## Final configuration: what you traded off between dev accuracy and generalization
 We gave up some clean accuracy for robustness. Training on DEV and on corrupted copies lifts DEV to 0.7079, but that number is in-training and says little about unseen queries. The CV table shows validation barely moves with more leaves or trees, so the gain we aimed for is stability on the hidden C2 versions. The corrupted copies and the scale-free within-query columns keep the ranking steady when features are noisy, missing or rescaled. For C1 we used rules instead of constants and averaged several tree shapes, so no single setting tuned on MSLR decides the result on a dataset we cannot see.
 
-## AI-use disclosure
-Claude Code (Anthropic, Claude Opus 5.5) and Cursor (Grok) were used to read the spec and starter code, write the submission modules, change the training scripts, run the experiments and draft these notes.
-
 ## Code provenance
-No external code was copied. Formulas come from the assignment references: RRF (Cormack, Clarke and Buettcher, SIGIR 2009), CombSUM and CombMNZ (Fox and Shaw, TREC-2 1994), RankNet (Burges et al., ICML 2005) and LambdaRank |ΔnDCG| pair weights (Burges, MSR-TR-2010-82) in `delta_ndcg_weights` and `weighted_ranknet_loss`. LambdaMART is LightGBM `lambdarank`. Libraries: NumPy, LightGBM and PyTorch, as in `requirements.txt`.
+No external code was copied. Formulas come from the original papers: RRF (Cormack, Clarke and Buettcher, SIGIR 2009), CombSUM and CombMNZ (Fox and Shaw, TREC-2 1994), RankNet (Burges et al., ICML 2005) and LambdaRank |ΔnDCG| pair weights (Burges, MSR-TR-2010-82) in `delta_ndcg_weights` and `weighted_ranknet_loss`. LambdaMART is LightGBM `lambdarank`. Libraries: NumPy, LightGBM and PyTorch, as in `requirements.txt`.

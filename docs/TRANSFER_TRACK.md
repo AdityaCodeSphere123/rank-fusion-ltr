@@ -19,4 +19,4 @@ Staff will run your training recipe on **two undisclosed learning-to-rank benchm
 Choices expressed as rules rather than constants (tree count and `min_data_in_leaf` scaled to data size, `feature_fraction` for wide inputs), and a small cross-validation inside the time limit. Constants tuned to MSLR often over- or under-fit a dataset of a different size or shape.
 
 ## Integrity
-Do not try to identify the benchmarks or consult the labels of any public learning-to-rank dataset for this assignment; doing so is an integrity violation, like consulting a solution key (spec Sections 6 and 10).
+Do not try to identify the benchmarks or consult the labels of any public learning-to-rank dataset for this task; doing so is an integrity violation, like consulting a solution key (spec Sections 6 and 10).

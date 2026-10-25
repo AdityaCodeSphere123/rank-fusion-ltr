@@ -1,4 +1,4 @@
-# Submission interface (assignment Sections 4.2, 5)
+# Submission interface (spec Sections 4.2, 5)
 
 `submission/ranking.py` must expose, with exactly these parameter names:
 

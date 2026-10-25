@@ -4,7 +4,7 @@ MSLR-WEB10K.zip from Microsoft Research, unzip it, then:
     python scripts/prepare_mslr.py --fold-dir /path/to/MSLR-WEB10K/Fold1 --out data
 
 Creates data/train/train.txt (Fold1 train.txt) and data/dev/vali.txt (Fold1 vali.txt). The Fold1 test.txt is the
-withheld held-out split: staff keep it; do NOT copy it here (assignment Section 6).
+withheld held-out split: staff keep it; do NOT copy it here (spec Section 6).
 """
 import os
 import sys

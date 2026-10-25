@@ -3,7 +3,7 @@ harness/run_harness.py -- runs your submission end-to-end on a labelled LTR
 file (e.g. data/toy/vali.txt or the real dev split) and reports dev metrics,
 exactly the way the grading harness does (minus the withheld held-out set).
 
-Single in-process script (assignment Section 4.2): prepare(), fuse_candidates()
+Single in-process script (spec Section 4.2): prepare(), fuse_candidates()
 and rerank_with_ltr() are called directly. Per query, the candidate pool is
 simply all rows of that query's block in the file.
 
@@ -34,7 +34,7 @@ EXPECTED_SIGNATURES = [
 def check_conformance(submission_module, model_path: Optional[str] = None) -> List[str]:
     """Human-readable problems (empty list = conformant). Checks signatures
     and, if model_path is given, that prepare() refuses a missing artifact
-    instead of silently training or falling back to an untrained model (assignment Section 5)."""
+    instead of silently training or falling back to an untrained model (spec Section 5)."""
     problems = []
     for name, expected in EXPECTED_SIGNATURES:
         fn = getattr(submission_module, name, None)

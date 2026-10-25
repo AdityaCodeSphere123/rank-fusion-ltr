@@ -1,4 +1,4 @@
-"""Grouped 5-fold cross-validation sweep over the number of trees (assignment Section 4.3).
+"""Grouped 5-fold cross-validation sweep over the number of trees (spec Section 4.3).
 
     python scripts/cv_lambdamart.py --train data/train --trees 25 50 100 200 400
 

@@ -1,5 +1,5 @@
 """
-harness/recipe_eval.py -- Track C1 machinery (assignment Sections 4.1, 7).
+harness/recipe_eval.py -- Track C1 machinery (spec Sections 4.1, 7).
 
 run_recipe_and_evaluate() calls the team's submission/recipe.py train() on a (train, vali) pair of flat-feature
 files, then loads the model it wrote through the team's OWN submission/ranking.py (prepare + rerank_with_ltr,

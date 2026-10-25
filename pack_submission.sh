@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-OUT="${HOME}/Desktop/2023CS50284.zip"
+OUT="${HOME}/Desktop/submission_package.zip"
 STAGE="$(mktemp -d)"
-DEST="${STAGE}/2023CS50284"
+DEST="${STAGE}/submission_package"
 
 cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
@@ -42,7 +42,7 @@ rsync -a \
 rm -f "$OUT"
 (
   cd "$STAGE"
-  zip -r -q -X "$OUT" 2023CS50284
+  zip -r -q -X "$OUT" submission_package
 )
 
 echo "Wrote ${OUT}"

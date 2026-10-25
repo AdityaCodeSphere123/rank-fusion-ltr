@@ -1,7 +1,7 @@
 """
 harness/feature_names.py -- the named structure of MSLR-WEB10K's 136 features
 and the small set of "base ranker" channels that fuse_candidates() receives
-(assignment Section 6).
+(spec Section 6).
 
 The index table below follows the official MSLR-WEB10K feature list (Microsoft
 Research, "Introducing LETOR 4.0 Datasets" / the feature-definition table that

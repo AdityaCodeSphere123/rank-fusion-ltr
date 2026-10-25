@@ -1,4 +1,4 @@
-"""Competition entry for Assignment 3.
+"""Competition entry.
 
 fuse_candidates adds up the min-max scores of BM25 on the whole document,
 BM25 on the title and LMIR.DIR. LMIR.JM is left out because every weight search

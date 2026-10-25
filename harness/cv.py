@@ -4,7 +4,7 @@ harness/cv.py -- grouped (by query) k-fold cross-validation splits.
 Why grouped: all documents of a query must land in the same fold. Splitting
 by row puts near-duplicate documents of one query in both the training and
 validation sides, which inflates the validation score -- exactly the
-overfitting cross-validation is supposed to measure (assignment Section 4.3).
+overfitting cross-validation is supposed to measure (spec Section 4.3).
 """
 from typing import List, Sequence, Tuple
 
